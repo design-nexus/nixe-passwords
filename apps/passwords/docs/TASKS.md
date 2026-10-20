@@ -60,6 +60,7 @@ See PLAN.md.
 - [x] Editing notes, cards and identities (`CreateItem`, `UpdateItem`; fields the app doesn't know are kept)
 - [x] Editing SSH keys: generate (Ed25519) or import an OpenSSH private key; the public key and fingerprint always come from it
 - [ ] SSH keys with a passphrase (imports ask for a copy without one for now)
+- [x] Passkeys investigation ([PASSKEYS.md](PASSKEYS.md)): storage format, what the official clients do as an authenticator, the extension and daemon design, interop tests; building it waits
 - [x] Assistant ability: `nixe-passwords-assistant` (MCP, `assistant` scope, off by default), `abilities/passwords`, `Secrets` capability in assistant-policy; tested over the socket and in the policy tests (the Assistant itself is reinstalled separately)
 - [x] Security report: weak (zxcvbn), reused and old passwords in memory, as a Security section; breach check through Have I Been Pwned's range API on request (prefixes only, padded), tested against a stand-in server
 - [x] Attachments: list, save to a chosen file, attach, delete; the daemon reads and writes the file through a handle the window passes, so the window never holds the contents

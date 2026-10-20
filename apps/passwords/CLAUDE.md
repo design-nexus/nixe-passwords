@@ -3,7 +3,7 @@
 - GPL-3.0-only (links `bitwarden-crypto`); `crates/nixe-passwords-proto` is MIT so
   Glimpse and Settings can talk to the daemon without linking GPL code. Design and
   rules: `docs/ARCHITECTURE.md`, `docs/SECURITY.md`; daemon interface:
-  `docs/GLIMPSE_API.md`; progress: `docs/TASKS.md`.
+  `docs/GLIMPSE_API.md`; passkeys (not built): `docs/PASSKEYS.md`; progress: `docs/TASKS.md`.
 - Package `nixe-passwords`: the window (`src/main.rs`, `src/app/`) and the daemon
   (`src/bin/nixe-passwordsd.rs`, `src/daemon/`). The daemon must not link GTK: check
   `ldd target/debug/nixe-passwordsd` after dependency changes.
