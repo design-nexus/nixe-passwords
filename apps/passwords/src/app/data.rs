@@ -37,6 +37,19 @@ pub struct Entry {
     pub reprompt: bool,
     pub deleted: bool,
     pub readable: bool,
+    /// What this account may do with it; organizations can limit each.
+    #[serde(default = "yes")]
+    pub editable: bool,
+    #[serde(default = "yes")]
+    pub view_password: bool,
+    #[serde(default = "yes")]
+    pub deletable: bool,
+    #[serde(default = "yes")]
+    pub restorable: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +62,11 @@ pub struct Named {
 pub struct Collection {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub organization: String,
+    /// Items can be added, changed and removed.
+    #[serde(default)]
+    pub writable: bool,
 }
 
 /// The kinds, as the sidebar lists them: id, label, icon.
@@ -155,6 +173,10 @@ mod tests {
             reprompt: false,
             deleted: false,
             readable: true,
+            editable: true,
+            view_password: true,
+            deletable: true,
+            restorable: true,
         }
     }
 

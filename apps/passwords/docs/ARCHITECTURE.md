@@ -128,6 +128,23 @@ a later phase.
   first, at most five) and `passwordRevisionDate` is set.
 - **Web addresses:** every one is saved with its encrypted checksum. An address that was
   already on the item keeps its match rule.
+
+**Organizations:** the server's permissions are enforced in the core, not only shown in
+the app:
+- **Read-only items** (`edit: false`, from a read-only collection) can't be changed;
+  `permissions.delete`/`restore` decide the trash.
+- **Hidden passwords** (`viewPassword: false`): the password, one-time code key, hidden
+  custom fields and the secret fields of cards, identities and SSH keys can't be
+  revealed or copied. Filling a page still uses the password, as the official extension
+  does, and the current one-time code stays available. An edit keeps the hidden values
+  as stored.
+- **Placing items:** a new item goes into collections the account can write to
+  (`POST /api/ciphers/create`), and an organization item changes collections the same
+  way (`PUT /api/ciphers/{id}/collections_v2`). Items never leave their organization.
+- **Moving a personal item in** (`PUT /api/ciphers/{id}/share`, one way): an item with
+  its own key has that key rewrapped by the organization key. One without gets its own
+  key, and every encrypted value is re-encrypted with it, including attachment keys
+  (sent as `attachments2`). Attachments from before attachment keys can't be moved here.
 - **What's sent back unchanged:** custom fields, passkeys, attachments and unknown fields.
 
 **Copy (Glimpse or the app):**

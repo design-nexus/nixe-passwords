@@ -32,6 +32,9 @@ pub enum SessionError {
     KeysChanged,
     /// An SSH key item's private key can't be used.
     BadSshKey(SshError),
+    /// This account may not do that (a read-only collection, moving an item out of its
+    /// organization, …); the text says what.
+    NotAllowed(&'static str),
 }
 
 impl fmt::Display for SessionError {
@@ -46,6 +49,7 @@ impl fmt::Display for SessionError {
             Self::SignedOut => f.write_str("not signed in"),
             Self::KeysChanged => f.write_str("the account's keys changed; unlock again"),
             Self::BadSshKey(e) => e.fmt(f),
+            Self::NotAllowed(why) => f.write_str(why),
         }
     }
 }

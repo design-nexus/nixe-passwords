@@ -79,6 +79,7 @@ struct KeyPicker {
     private: RefCell<String>,
     summary: gtk::Label,
     public: gtk::Label,
+    buttons: gtk::Box,
     body: gtk::Box,
 }
 
@@ -104,7 +105,7 @@ impl KeyPicker {
         buttons.append(&generate);
         buttons.append(&import);
         body.append(&buttons);
-        let picker = Rc::new(KeyPicker { private: RefCell::new(String::new()), summary, public, body });
+        let picker = Rc::new(KeyPicker { private: RefCell::new(String::new()), summary, public, buttons, body });
         let (u, p) = (ui.clone(), picker.clone());
         generate.connect_clicked(move |_| {
             let (u, p) = (u.clone(), p.clone());
@@ -252,9 +253,66 @@ struct Form {
     favorite: gtk::Switch,
     reprompt: gtk::Switch,
     banner: gtk::Box,
+    /// `None` for "Me", else an organization's id; the item's own when it has one.
+    owner: gtk::DropDown,
+    owner_ids: Vec<Option<String>>,
+    /// The chosen organization's collections, as checkboxes.
+    collections: gtk::Box,
+    collection_checks: RefCell<Vec<(String, gtk::CheckButton)>>,
+    /// Said when a personal item is about to move into an organization.
+    move_note: gtk::Label,
 }
 
 impl Form {
+    fn organization(&self) -> Option<String> {
+        self.owner_ids.get(self.owner.selected() as usize).cloned().flatten()
+    }
+
+    /// Lists the chosen organization's collections; `current` are ticked. Ones this
+    /// account can't write to can't be ticked or unticked.
+    fn show_collections(&self, ui: &Ui, current: &[String]) {
+        ui::clear(&self.collections);
+        let mut checks = Vec::new();
+        if let Some(org) = self.organization() {
+            self.collections.append(&label("Collections", "account-field"));
+            for c in ui.listing.borrow().collections.iter().filter(|c| c.organization == org) {
+                let check = gtk::CheckButton::with_label(&c.name);
+                check.set_active(current.contains(&c.id));
+                check.set_sensitive(c.writable);
+                if !c.writable {
+                    check.set_tooltip_text(Some("Read-only for you"));
+                }
+                self.collections.append(&check);
+                checks.push((c.id.clone(), check));
+            }
+        }
+        self.collections.set_visible(!checks.is_empty());
+        *self.collection_checks.borrow_mut() = checks;
+    }
+
+    /// For an item whose organization hides its secrets: those fields can't be seen or
+    /// changed here, and keep their stored values when saved.
+    fn hide_secrets(&self) {
+        for (name, control) in self.fields.borrow().iter() {
+            let secret = fields::of_kind(self.kind.get()).iter().any(|s| s.name == *name && s.secret);
+            match control {
+                Control::Key(k) => {
+                    k.summary.set_text("Hidden by its organization; the key stays as it is.");
+                    k.public.set_visible(false);
+                    k.buttons.set_sensitive(false);
+                }
+                Control::Secret(p) if secret => {
+                    p.set_sensitive(false);
+                    p.set_placeholder_text(Some("Hidden by its organization"));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn chosen_collections(&self) -> Vec<String> {
+        self.collection_checks.borrow().iter().filter(|(_, c)| c.is_active()).map(|(id, _)| id.clone()).collect()
+    }
     /// Shows the fields of `kind`: the login form, or the kind's own fields. An SSH key's
     /// public key and fingerprint come from its private key, so only that is edited.
     fn show_kind(&self, ui: &Ui, kind: &'static str) {
@@ -343,6 +401,30 @@ pub fn open(ui: &Ui, entry: Option<Entry>) {
     let favorite = gtk::Switch::new();
     let reprompt = gtk::Switch::new();
 
+    // Owner: "Me" or an organization with a collection this account can write to. An
+    // organization item stays in its organization.
+    let listing = ui.listing.borrow();
+    let item_org = entry.as_ref().and_then(|e| e.organization.clone());
+    let mut owner_ids = vec![None];
+    let mut owner_names = vec![(String::new(), "Me".to_string())];
+    for o in &listing.organizations {
+        let writable = listing.collections.iter().any(|c| c.organization == o.id && c.writable);
+        if item_org.as_deref() == Some(o.id.as_str()) || item_org.is_none() && writable {
+            owner_ids.push(Some(o.id.clone()));
+            owner_names.push((o.id.clone(), o.name.clone()));
+        }
+    }
+    drop(listing);
+    if item_org.is_some() {
+        owner_ids.remove(0);
+        owner_names.remove(0);
+    }
+    let owner = w::dropdown(&owner_names, item_org.as_deref().unwrap_or_default());
+    owner.set_sensitive(owner_ids.len() > 1);
+    let collections = w::vbox(4);
+    let move_note = label("Once it's in an organization, it can't be moved back here.", "dim");
+    move_note.set_visible(false);
+
     field(&body, "Name", &name);
     let login = w::vbox(8);
     field(&login, "Username", &username);
@@ -350,12 +432,23 @@ pub fn open(ui: &Ui, entry: Option<Entry>) {
     pw_line.append(&password);
     let generate = w::bar_button("media-playlist-shuffle-symbolic", "Generate a password");
     pw_line.append(&generate);
-    field(&login, "Password", &pw_line);
-    field(&login, "One-time code key", &totp);
-    field(&login, "Web addresses, one per line", &frame(&uris));
     body.append(&login);
     let others = w::vbox(8);
     body.append(&others);
+    let hidden_note = label("Its organization hides this login's password from you; it stays as it is.", "dim");
+    hidden_note.set_visible(entry.as_ref().is_some_and(|e| !e.view_password));
+    if !hidden_note.is_visible() {
+        field(&login, "Password", &pw_line);
+        field(&login, "One-time code key", &totp);
+    } else {
+        login.append(&hidden_note);
+    }
+    field(&login, "Web addresses, one per line", &frame(&uris));
+    if owner_ids.len() > 1 || item_org.is_some() {
+        field(&body, "Owner", &owner);
+        body.append(&move_note);
+        body.append(&collections);
+    }
     field(&body, "Folder", &folder);
     let rows = w::vbox(0);
     rows.add_css_class("group-list");
@@ -384,8 +477,19 @@ pub fn open(ui: &Ui, entry: Option<Entry>) {
         favorite,
         reprompt,
         banner,
+        owner,
+        owner_ids,
+        collections,
+        collection_checks: RefCell::new(Vec::new()),
+        move_note,
     });
     form.show_kind(ui, kind);
+    form.show_collections(ui, &entry.as_ref().map(|e| e.collections.clone()).unwrap_or_default());
+    let (u, f, personal) = (ui.clone(), form.clone(), entry.as_ref().is_some_and(|e| e.organization.is_none()));
+    form.owner.connect_selected_notify(move |_| {
+        f.show_collections(&u, &[]);
+        f.move_note.set_visible(personal && f.organization().is_some());
+    });
     let (u, f) = (ui.clone(), form.clone());
     kind_choice.connect_selected_notify(move |d| {
         if let Some(k) = KINDS.get(d.selected() as usize) {
@@ -494,11 +598,12 @@ fn fill_secrets(ui: &Ui, id: &str, form: &Rc<Form>, dialog: &gtk::Window) {
     glib::spawn_future_local(async move {
         let entry = ui.listing.borrow().entries.iter().find(|e| e.id == id).cloned();
         let mut wanted: Vec<String> = Vec::new();
+        let visible = entry.as_ref().is_none_or(|e| e.view_password);
         if form.kind.get() == "login" {
-            if entry.as_ref().is_some_and(|e| e.has_password) {
+            if visible && entry.as_ref().is_some_and(|e| e.has_password) {
                 wanted.push("password".into());
             }
-            if entry.as_ref().is_some_and(|e| e.has_totp) {
+            if visible && entry.as_ref().is_some_and(|e| e.has_totp) {
                 wanted.push("totp_seed".into());
             }
         } else {
@@ -513,9 +618,12 @@ fn fill_secrets(ui: &Ui, id: &str, form: &Rc<Form>, dialog: &gtk::Window) {
             for row in listed.into_iter().filter(|r| !r.name.starts_with("custom:")) {
                 match row.value {
                     Some(value) => set_field(&form, &row.name, &value),
-                    None if row.secret => wanted.push(row.name),
+                    None if row.secret && visible => wanted.push(row.name),
                     None => {}
                 }
+            }
+            if !visible {
+                form.hide_secrets();
             }
         }
         wanted.push("notes".into());
@@ -557,11 +665,18 @@ fn submit(ui: &Ui, form: &Rc<Form>, id: Option<String>, dialog: &gtk::Window, sa
         form.name.grab_focus();
         return;
     }
-    if kind == "ssh" && form.fields.borrow().iter().all(|(_, c)| c.text().is_empty()) {
+    let hidden = id.as_ref().is_some_and(|id| ui.listing.borrow().entries.iter().any(|e| e.id == *id && !e.view_password));
+    if kind == "ssh" && !hidden && form.fields.borrow().iter().all(|(_, c)| c.text().is_empty()) {
         ui::toast(ui, "Generate a key or import one first.");
         return;
     }
     let folder = form.folder_ids.get(form.folder.selected() as usize).cloned().flatten();
+    let organization = form.organization();
+    let collections = form.chosen_collections();
+    if organization.is_some() && collections.is_empty() {
+        ui::toast(ui, "Choose at least one collection.");
+        return;
+    }
     let draft = if kind == "login" {
         let uris: Vec<String> =
             text_of(&form.uris).lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect();
@@ -575,6 +690,8 @@ fn submit(ui: &Ui, form: &Rc<Form>, id: Option<String>, dialog: &gtk::Window, sa
             "folder": folder,
             "favorite": form.favorite.is_active(),
             "reprompt": form.reprompt.is_active(),
+            "organization": organization,
+            "collections": collections,
         })
     } else {
         let fields: serde_json::Map<String, serde_json::Value> =
@@ -587,6 +704,8 @@ fn submit(ui: &Ui, form: &Rc<Form>, id: Option<String>, dialog: &gtk::Window, sa
             "folder": folder,
             "favorite": form.favorite.is_active(),
             "reprompt": form.reprompt.is_active(),
+            "organization": organization,
+            "collections": collections,
         })
     }
     .to_string();

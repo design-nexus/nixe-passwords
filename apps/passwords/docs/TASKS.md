@@ -60,3 +60,4 @@ See PLAN.md.
 - [x] Editing notes, cards and identities (`CreateItem`, `UpdateItem`; fields the app doesn't know are kept)
 - [x] Editing SSH keys: generate (Ed25519) or import an OpenSSH private key; the public key and fingerprint always come from it
 - [ ] SSH keys with a passphrase (imports ask for a copy without one for now)
+- [x] Organizations: permissions enforced (read-only items, hidden passwords, delete and restore), new items in writable collections, changing collections, moving personal items in (rewrapped or re-encrypted, attachments included); live test with an owner and a member

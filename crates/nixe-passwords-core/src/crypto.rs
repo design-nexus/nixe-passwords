@@ -250,6 +250,22 @@ impl Keys {
         Ok((ItemKey { ctx, key }, wrapped))
     }
 
+    /// An item's own key, wrapped by `from`'s key (the user's when `None`), rewrapped by
+    /// `to`'s: moving the item doesn't touch its fields.
+    pub fn rewrap(&self, own_key: &str, from: Option<Uuid>, to: Option<Uuid>) -> Result<String> {
+        let slot = |org: Option<Uuid>| org.map_or(Symmetric::User, Symmetric::Organization);
+        let mut ctx = self.store.context();
+        for s in [slot(from), slot(to)] {
+            if !ctx.has_symmetric_key(s) {
+                return Err(CryptoError::MissingKey);
+            }
+        }
+        let wrapped = bw::EncString::parse_strict(own_key).map_err(|_| CryptoError::Malformed)?;
+        let key = ctx.unwrap_symmetric_key(slot(from), &wrapped).map_err(|_| CryptoError::Decrypt)?;
+        let rewrapped = ctx.wrap_symmetric_key(slot(to), key).map_err(|_| CryptoError::Encrypt)?;
+        serde_json::to_value(&rewrapped).ok().and_then(|v| v.as_str().map(str::to_string)).ok_or(CryptoError::Encrypt)
+    }
+
     /// Drops every key. The vault is locked afterwards.
     pub fn lock(&self) {
         self.store.clear();
@@ -292,6 +308,14 @@ impl ItemKey<'_> {
         let enc = bw::EncString::parse_strict(value).map_err(|_| CryptoError::Malformed)?;
         let plain: Vec<u8> = enc.decrypt(&mut self.ctx, self.key).map_err(|_| CryptoError::Decrypt)?;
         Ok(SecretBytes::new(plain))
+    }
+
+    /// Encrypts a key (an attachment's), which is bytes rather than text.
+    pub fn encrypt_key_bytes(&mut self, plain: &[u8]) -> Result<String> {
+        let enc: bw::EncString = bw::BitwardenLegacyKeyBytes::from(plain.to_vec())
+            .encrypt(&mut self.ctx, self.key)
+            .map_err(|_| CryptoError::Encrypt)?;
+        serde_json::to_value(&enc).ok().and_then(|v| v.as_str().map(str::to_string)).ok_or(CryptoError::Encrypt)
     }
 
     pub fn encrypt(&mut self, plain: &str) -> Result<String> {

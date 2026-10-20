@@ -11,16 +11,16 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nixe_passwords_core::crypto::{self, PairKey};
+use nixe_passwords_core::edit::{LoginDraft, Place};
 use nixe_passwords_core::matching;
 use nixe_passwords_core::secret::Secret;
 use nixe_passwords_core::store::Pairing;
-use nixe_passwords_core::vault::{Field, reveal};
+use nixe_passwords_core::vault::{Field, reveal_for_use};
 use nixe_passwords_proto::{Error as Code, state};
 use serde_json::{Value, json};
 use url::Url;
 
 use super::peer::Scope;
-use nixe_passwords_core::edit::LoginDraft;
 
 use super::vault::{Failure, Result, State, Vault, generated, need, online, parse_id, within};
 
@@ -301,7 +301,10 @@ fn handle(st: &mut State, pairing: &str, browser: &(i32, String), request: &Valu
             if !within(&mut active.fills, FILLS_PER_MINUTE) {
                 return error(Code::RateLimited);
             }
-            let get = |field| reveal(&session.keys, &session.snapshot, id, field).ok().map(|s: Secret| s.expose().to_string());
+            // Filling uses the password even where the organization hides it from view,
+            // as the official extension does.
+            let get =
+                |field| reveal_for_use(&session.keys, &session.snapshot, id, field).ok().map(|s: Secret| s.expose().to_string());
             let answer = if r == "fill" {
                 json!({"username": get(Field::Username).unwrap_or_default(), "password": get(Field::Password).unwrap_or_default()})
             } else {
@@ -364,9 +367,13 @@ async fn save(st: &mut State, pairing: &str, request: &Value) -> Value {
         Some(id) if session.view.get(id).is_some_and(|e| e.reprompt) => {
             return error(Code::Reprompt);
         }
+        // A read-only login, or one whose password is hidden, can't take a new password.
+        Some(id) if session.view.get(id).is_some_and(|e| !e.editable || !e.view_password) => {
+            return error(Code::Denied);
+        }
         Some(id) => {
             let entry = session.view.get(id).expect("found above");
-            let get = |field| reveal(&session.keys, &session.snapshot, id, field).ok();
+            let get = |field| reveal_for_use(&session.keys, &session.snapshot, id, field).ok();
             let draft = LoginDraft {
                 name: Secret::new(entry.name.expose()),
                 username: entry.username.as_ref().map(|u| Secret::new(u.expose())),
@@ -377,6 +384,7 @@ async fn save(st: &mut State, pairing: &str, request: &Value) -> Value {
                 folder: entry.folder,
                 favorite: entry.favorite,
                 reprompt: entry.reprompt,
+                place: Place { organization: entry.organization, collections: entry.collections.clone() },
             };
             session.update_login(&mut st.store, &server, &refresh, id, &draft).await.map(|()| ("updated", id))
         }
@@ -392,6 +400,7 @@ async fn save(st: &mut State, pairing: &str, request: &Value) -> Value {
                 folder: None,
                 favorite: false,
                 reprompt: false,
+                place: Place::default(),
             };
             session.create_login(&mut st.store, &server, &refresh, &draft).await.map(|id| ("created", id))
         }

@@ -83,14 +83,14 @@ Item ids are not secret, but the list reveals usage, so it isn't written to disk
 | `VerifyPassword` | `(s password) → ()` | For items that ask for the master password again |
 | `SignOut` | `() → ()` | Removes the account, the local copy and the saved token |
 | `Sync` | `() → ()` | Also allowed for the Settings page |
-| `List` | `() → s` | JSON: account, entries (metadata), folders, collections, organizations |
+| `List` | `() → s` | JSON: account, entries (metadata, with `editable`, `view_password`, `deletable`, `restorable`), folders, collections (with `writable`), organizations |
 | `Reveal` | `(s id, s field) → s` | `username`, `password`, `totp` (the code), `totp_seed`, `notes`, `custom:N`, or a card, identity or SSH key field (`card.number`, …; the list is `nixe_passwords_proto::fields`) |
 | `Fields` | `(s id) → s` | JSON `[{name, label, value, secret}]`: a card's, identity's or SSH key's fields and the custom fields; secret values are left out |
 | `GeneratePassword` | `(s rules) → s` | `{"kind":"password",…}` or `{"kind":"passphrase",…}` |
-| `CreateLogin` | `(s draft) → s id` | Draft JSON: name, username, password, totp, uris, notes, folder, favorite, reprompt |
-| `UpdateLogin` | `(s id, s draft) → ()` | |
+| `CreateLogin` | `(s draft) → s id` | Draft JSON: name, username, password, totp, uris, notes, folder, favorite, reprompt, organization, collections (an organization item needs at least one collection it can write to) |
+| `UpdateLogin` | `(s id, s draft) → ()` | A password the organization hides stays as stored |
 | `CreateItem` | `(s draft) → s id` | A note, card, identity or SSH key. Draft JSON: kind (`note`, `card`, `identity`, `ssh`), name, fields (`{"card.number": …}`; one left out is cleared), notes, folder, favorite, reprompt. An SSH key needs only `ssh.privateKey` (OpenSSH, no passphrase); its public key and fingerprint are worked out from it |
-| `UpdateItem` | `(s id, s draft) → ()` | The kind must match the item's |
+| `UpdateItem` | `(s id, s draft) → ()` | The kind must match the item's. Like `UpdateLogin`, `organization` and `collections` move a personal item into an organization or change an organization item's collections; read-only items are refused with `Denied` |
 | `GenerateSshKey` | `() → s` | A new Ed25519 key: JSON `{private, public, fingerprint}` |
 | `ReadSshKey` | `(s private) → s` | JSON `{public, fingerprint}` for an OpenSSH private key; fails for a key with a passphrase |
 | `Trash`, `Restore` | `(s id) → ()` | |

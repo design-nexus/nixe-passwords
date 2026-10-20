@@ -308,6 +308,29 @@ impl Server {
     }
 
     /// Moves an item to the trash.
+    /// Creates an organization item in the given collections.
+    pub async fn create_org_cipher(&self, access: &Secret, body: &Value, collections: &[Uuid]) -> Result<Cipher> {
+        let body = json!({"cipher": body, "collectionIds": collections});
+        let req = self.http.post(self.at("/api/ciphers/create")).bearer_auth(access.expose()).json(&body);
+        let value = expect_ok(self.send(req).await?).await?;
+        serde_json::from_value(value).map_err(|_| ApiError::Protocol)
+    }
+
+    /// Puts an organization item in exactly these collections.
+    pub async fn set_collections(&self, access: &Secret, id: Uuid, collections: &[Uuid]) -> Result<()> {
+        let body = json!({"collectionIds": collections});
+        let req = self.http.put(self.at(&format!("/api/ciphers/{id}/collections_v2"))).bearer_auth(access.expose()).json(&body);
+        expect_ok(self.send(req).await?).await.map(|_| ())
+    }
+
+    /// Moves a personal item into an organization; `body` is the item re-keyed for it.
+    pub async fn share_cipher(&self, access: &Secret, id: Uuid, body: &Value, collections: &[Uuid]) -> Result<Cipher> {
+        let body = json!({"cipher": body, "collectionIds": collections});
+        let req = self.http.put(self.at(&format!("/api/ciphers/{id}/share"))).bearer_auth(access.expose()).json(&body);
+        let value = expect_ok(self.send(req).await?).await?;
+        serde_json::from_value(value).map_err(|_| ApiError::Protocol)
+    }
+
     pub async fn trash_cipher(&self, access: &Secret, id: Uuid) -> Result<()> {
         let req = self.http.put(self.at(&format!("/api/ciphers/{id}/delete"))).bearer_auth(access.expose());
         expect_ok(self.send(req).await?).await.map(|_| ())

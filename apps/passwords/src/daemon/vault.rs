@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use nixe_passwords_core::api::{ApiError, Server, TwoFactor, TwoFactorAnswer};
 use nixe_passwords_core::crypto::CryptoError;
-use nixe_passwords_core::edit::{ItemDraft, LoginDraft};
+use nixe_passwords_core::edit::{ItemDraft, LoginDraft, Place};
 use nixe_passwords_core::generate;
 use nixe_passwords_core::keyring;
 use nixe_passwords_core::model::Kind;
@@ -56,6 +56,7 @@ impl From<SessionError> for Failure {
             SessionError::Api(ApiError::NotFound) => Code::NotFound,
             SessionError::Api(ApiError::RateLimited) => Code::RateLimited,
             SessionError::Api(ApiError::Conflict) => Code::Conflict,
+            SessionError::NotAllowed(_) => Code::Denied,
             _ => Code::Failed,
         };
         Failure::new(kind, e.to_string())
@@ -67,6 +68,7 @@ impl From<RevealError> for Failure {
         match e {
             RevealError::NotFound => Failure::new(Code::NotFound, "no such item"),
             RevealError::Empty | RevealError::BadTotp => Failure::new(Code::NoField, e.to_string()),
+            RevealError::Hidden => Failure::new(Code::Denied, e.to_string()),
             RevealError::Crypto(CryptoError::MissingKey) => Failure::new(Code::Locked, "the vault is locked"),
             RevealError::Crypto(c) => Failure::new(Code::Failed, c.to_string()),
         }
@@ -456,8 +458,11 @@ impl Vault {
         let v = &session.view;
         let entries: Vec<_> = v.entries.iter().map(entry_json).collect();
         let folders: Vec<_> = v.folders.iter().map(|f| json!({"id": f.id, "name": f.name.expose()})).collect();
-        let collections: Vec<_> =
-            v.collections.iter().map(|c| json!({"id": c.id, "organization": c.organization, "name": c.name.expose()})).collect();
+        let collections: Vec<_> = v
+            .collections
+            .iter()
+            .map(|c| json!({"id": c.id, "organization": c.organization, "name": c.name.expose(), "writable": c.writable}))
+            .collect();
         let orgs: Vec<_> = v.organizations.iter().map(|(id, name)| json!({"id": id, "name": name})).collect();
         let account = &session.account;
         Ok(json!({
@@ -716,6 +721,10 @@ fn parse_draft(text: &str) -> Result<LoginDraft> {
         favorite: bool,
         #[serde(default)]
         reprompt: bool,
+        #[serde(default)]
+        organization: Option<Uuid>,
+        #[serde(default)]
+        collections: Vec<Uuid>,
     }
     let d: Draft = serde_json::from_str(text).map_err(|_| Failure::new(Code::Failed, "the item couldn't be read"))?;
     if d.name.trim().is_empty() {
@@ -732,6 +741,7 @@ fn parse_draft(text: &str) -> Result<LoginDraft> {
         folder: d.folder,
         favorite: d.favorite,
         reprompt: d.reprompt,
+        place: Place { organization: d.organization, collections: d.collections },
     })
 }
 
@@ -752,6 +762,10 @@ fn parse_item_draft(text: &str) -> Result<ItemDraft> {
         favorite: bool,
         #[serde(default)]
         reprompt: bool,
+        #[serde(default)]
+        organization: Option<Uuid>,
+        #[serde(default)]
+        collections: Vec<Uuid>,
     }
     let unreadable = || Failure::new(Code::Failed, "the item couldn't be read");
     let d: Draft = serde_json::from_str(text).map_err(|_| unreadable())?;
@@ -776,6 +790,7 @@ fn parse_item_draft(text: &str) -> Result<ItemDraft> {
         folder: d.folder,
         favorite: d.favorite,
         reprompt: d.reprompt,
+        place: Place { organization: d.organization, collections: d.collections },
     })
 }
 
@@ -809,6 +824,7 @@ fn entry_json(e: &Entry) -> serde_json::Value {
         "host": e.host, "folder": e.folder, "organization": e.organization, "collections": e.collections,
         "favorite": e.favorite, "has_password": e.has_password, "has_totp": e.has_totp,
         "reprompt": e.reprompt, "deleted": e.deleted, "readable": e.readable, "revision": e.revision,
+        "editable": e.editable, "view_password": e.view_password, "deletable": e.deletable, "restorable": e.restorable,
     })
 }
 

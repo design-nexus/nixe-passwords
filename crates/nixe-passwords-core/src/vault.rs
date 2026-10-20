@@ -35,12 +35,19 @@ pub struct Entry {
     pub deleted: bool,
     pub readable: bool,
     pub revision: String,
+    /// What this account may do with it (see `Cipher::can_edit` and the rest).
+    pub editable: bool,
+    pub view_password: bool,
+    pub deletable: bool,
+    pub restorable: bool,
 }
 
 pub struct Named {
     pub id: Uuid,
     pub organization: Option<Uuid>,
     pub name: Secret,
+    /// For collections: items can be added, changed and removed. Folders always are.
+    pub writable: bool,
 }
 
 #[derive(Default)]
@@ -135,6 +142,8 @@ pub enum RevealError {
     /// The item has no such field.
     Empty,
     BadTotp,
+    /// The item's organization hides this field from this account.
+    Hidden,
     Crypto(CryptoError),
 }
 
@@ -144,6 +153,7 @@ impl std::fmt::Display for RevealError {
             Self::NotFound => f.write_str("no such item"),
             Self::Empty => f.write_str("the item doesn't have that"),
             Self::BadTotp => f.write_str("the item's one-time code setting isn't valid"),
+            Self::Hidden => f.write_str("the organization hides this from you"),
             Self::Crypto(e) => e.fmt(f),
         }
     }
@@ -159,12 +169,12 @@ impl View {
         };
         for f in &sync.folders {
             if let Ok(name) = keys.item(None, None).and_then(|mut k| k.decrypt(&f.name)) {
-                view.folders.push(Named { id: f.id, organization: None, name });
+                view.folders.push(Named { id: f.id, organization: None, name, writable: true });
             }
         }
         for c in &sync.collections {
             if let Ok(name) = keys.item(Some(c.organization_id), None).and_then(|mut k| k.decrypt(&c.name)) {
-                view.collections.push(Named { id: c.id, organization: Some(c.organization_id), name });
+                view.collections.push(Named { id: c.id, organization: Some(c.organization_id), name, writable: c.writable() });
             }
         }
         view.entries = sync.ciphers.iter().map(|c| entry(keys, c)).collect();
@@ -250,8 +260,31 @@ impl View {
     }
 }
 
-/// Decrypts one secret field of one item. TOTP gives the current code.
+/// Decrypts one secret field of one item for the user to see or copy. TOTP gives the
+/// current code. Fields the item's organization hides from this account (the password,
+/// the one-time code key, hidden custom fields, and the secret fields of cards,
+/// identities and SSH keys) are refused; the current code isn't.
 pub fn reveal(keys: &Keys, sync: &Sync, id: Uuid, field: Field) -> Result<Secret, RevealError> {
+    let c = sync.ciphers.iter().find(|c| c.id == id).ok_or(RevealError::NotFound)?;
+    if !c.can_view_password() && hides(c, field) {
+        return Err(RevealError::Hidden);
+    }
+    reveal_for_use(keys, sync, id, field)
+}
+
+/// Whether hiding passwords covers this field of this item.
+fn hides(c: &Cipher, field: Field) -> bool {
+    match field {
+        Field::Password | Field::TotpSeed => true,
+        Field::Custom(n) => c.fields.as_ref().and_then(|f| f.get(n)).is_some_and(|f| f.kind == 1),
+        Field::Sub(spec) => spec.secret,
+        _ => false,
+    }
+}
+
+/// Decrypts one field for the daemon's own use, never shown: filling a page (official
+/// clients fill hidden passwords too) or carrying a field through an edit.
+pub fn reveal_for_use(keys: &Keys, sync: &Sync, id: Uuid, field: Field) -> Result<Secret, RevealError> {
     let c = sync.ciphers.iter().find(|c| c.id == id).ok_or(RevealError::NotFound)?;
     let mut key = keys.item(c.organization_id, c.key.as_deref()).map_err(RevealError::Crypto)?;
     let login = c.login.as_ref();
@@ -301,6 +334,10 @@ fn entry(keys: &Keys, c: &Cipher) -> Entry {
         deleted: c.is_deleted(),
         readable: false,
         revision: c.revision_date.clone(),
+        editable: c.can_edit(),
+        view_password: c.can_view_password(),
+        deletable: c.can_delete(),
+        restorable: c.can_restore(),
     };
     let Ok(mut key) = keys.item(c.organization_id, c.key.as_deref()) else {
         return e;

@@ -82,22 +82,22 @@ pub fn show(ui: &Ui) {
     if e.deleted {
         let restore = w::labeled_button("edit-undo-symbolic", "Restore");
         restore.add_css_class("suggested-action");
+        allow(&restore, e.restorable, "Restore this item", "Its organization doesn't let you restore it");
         let (u, id) = (ui.clone(), e.id.clone());
         restore.connect_clicked(move |_| set_trashed(&u, &id, false));
         bar.append(&restore);
     } else {
         let edit = w::labeled_button("document-edit-symbolic", "Edit");
-        let editable = editor::KINDS.contains(&e.kind.as_str());
-        edit.set_sensitive(editable);
-        edit.set_tooltip_text(Some(if editable {
-            "Edit this item"
+        if !editor::KINDS.contains(&e.kind.as_str()) {
+            allow(&edit, false, "", "This kind of item can't be edited here yet; use the web vault");
         } else {
-            "This kind of item can't be edited here yet; use the web vault"
-        }));
+            allow(&edit, e.editable, "Edit this item", "Read-only for you: its collection doesn't allow changes");
+        }
         let (u, entry) = (ui.clone(), e.clone());
         edit.connect_clicked(move |_| editor::open(&u, Some(entry.clone())));
         bar.append(&edit);
         let trash = w::labeled_button("user-trash-symbolic", "Move to trash");
+        allow(&trash, e.deletable, "Move this item to the trash", "Its organization doesn't let you delete it");
         let (u, id) = (ui.clone(), e.id.clone());
         trash.connect_clicked(move |_| set_trashed(&u, &id, true));
         bar.append(&trash);
@@ -113,7 +113,9 @@ pub fn show(ui: &Ui) {
                 Some(copy_button(ui, &e.id, "username", "Copy username (Ctrl+Shift+U)").upcast_ref()),
             ));
         }
-        if e.has_password {
+        if e.has_password && !e.view_password {
+            rows.append(&hidden_row("Password"));
+        } else if e.has_password {
             rows.append(&secret_row(ui, &e, "password", "Password", "Copy password (Ctrl+Shift+C)"));
         }
         if e.has_totp {
@@ -192,7 +194,9 @@ fn show_fields(ui: &Ui, e: &Entry, into: &gtk::Box) {
             rows.add_css_class("group-list");
             into.append(&rows);
             for f in fields {
-                if f.secret {
+                if f.secret && !e.view_password {
+                    rows.append(&hidden_row(&f.label));
+                } else if f.secret {
                     rows.append(&secret_row(&ui, &e, &f.name, &f.label, &format!("Copy {}", f.label.to_lowercase())));
                 } else {
                     let value = f.value.unwrap_or_default();
@@ -218,6 +222,19 @@ fn wrap_anywhere(row: &gtk::Box) {
         value.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         value.set_attributes(Some(&unhyphenated));
     }
+}
+
+/// Enables a button with its tooltip, or disables it saying why.
+fn allow(button: &gtk::Button, allowed: bool, tip: &str, why_not: &str) {
+    button.set_sensitive(allowed);
+    button.set_tooltip_text(Some(if allowed { tip } else { why_not }));
+}
+
+/// A field the item's organization hides from this account: no reveal, no copy.
+fn hidden_row(title: &str) -> gtk::Box {
+    let row = w::row("Hidden by its organization", &glib::markup_escape_text(title), None);
+    row.add_css_class("dim");
+    row
 }
 
 fn group(ui: &Ui, title: &str) -> gtk::Box {

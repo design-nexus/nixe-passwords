@@ -57,17 +57,28 @@ pub async fn register(email: &str, password: &str, kdf: &Kdf) -> String {
     pair.public.to_string()
 }
 
-/// Creates an organization owned by the account and returns its id and the id of its
-/// one collection (test fixture: real clients do this in the web vault).
+/// An organization made by `create_org`: its id, its first collection, and its key.
+pub struct Org {
+    pub id: String,
+    pub collection: String,
+    pub key: bitwarden_crypto::SymmetricCryptoKey,
+}
+
+/// The organization key wrapped for an account's public key (base64 DER).
 #[allow(deprecated)] // the *_key_unsigned helper
-pub async fn create_org(access: &str, email: &str, public: &str) -> (String, String) {
-    use bitwarden_crypto::{
-        KeyEncryptable, PublicKey, SpkiPublicKeyBytes, SymmetricCryptoKey, SymmetricKeyAlgorithm, UnsignedSharedKey, UserKey,
-    };
+fn share_key(key: &bitwarden_crypto::SymmetricCryptoKey, public: &str) -> String {
+    use bitwarden_crypto::{PublicKey, SpkiPublicKeyBytes, UnsignedSharedKey};
     let der = bitwarden_encoding::B64::try_from(public).unwrap();
     let public = PublicKey::from_der(&SpkiPublicKeyBytes::from(der.as_bytes().to_vec())).unwrap();
+    UnsignedSharedKey::encapsulate_key_unsigned(key, &public).unwrap().to_string()
+}
+
+/// Creates an organization owned by the account (test fixture: real clients do this in
+/// the web vault).
+pub async fn create_org(access: &str, email: &str, public: &str) -> Org {
+    use bitwarden_crypto::{KeyEncryptable, SymmetricCryptoKey, SymmetricKeyAlgorithm, UserKey};
     let org_key = SymmetricCryptoKey::make(SymmetricKeyAlgorithm::Aes256CbcHmac);
-    let shared = UnsignedSharedKey::encapsulate_key_unsigned(&org_key, &public).unwrap();
+    let shared = share_key(&org_key, public);
     let pair = UserKey::new(org_key.clone()).make_key_pair().unwrap();
     let collection = "Shared".encrypt_with_key(&org_key).unwrap();
     let http = http();
@@ -76,7 +87,7 @@ pub async fn create_org(access: &str, email: &str, public: &str) -> (String, Str
         .bearer_auth(access)
         .json(&json!({
             "name": "Test Org", "billingEmail": email, "collectionName": collection.to_string(),
-            "key": shared.to_string(), "planType": 0,
+            "key": shared, "planType": 0,
             "keys": {"publicKey": pair.public.to_string(), "encryptedPrivateKey": pair.private},
         }))
         .send()
@@ -95,8 +106,64 @@ pub async fn create_org(access: &str, email: &str, public: &str) -> (String, Str
         .json()
         .await
         .unwrap();
-    let col = cols["data"][0]["id"].as_str().unwrap().to_string();
-    (id, col)
+    let collection = cols["data"][0]["id"].as_str().unwrap().to_string();
+    Org { id, collection, key: org_key }
+}
+
+/// Adds a collection to the organization and returns its id.
+pub async fn create_collection(access: &str, org: &Org, name: &str) -> String {
+    use bitwarden_crypto::KeyEncryptable;
+    let name = name.encrypt_with_key(&org.key).unwrap().to_string();
+    let made: Value = http()
+        .post(format!("{}/api/organizations/{}/collections", server_url(), org.id))
+        .bearer_auth(access)
+        .json(&json!({"name": name, "externalId": null, "groups": [], "users": []}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    made["id"].as_str().expect("collection created").to_string()
+}
+
+/// Makes an existing account a member (a plain user) with access to `collections`, given
+/// as `(id, read_only, hide_passwords)`, and confirms it. The test server sends no
+/// mail, so an invited account is accepted at once.
+pub async fn add_member(access: &str, org: &Org, email: &str, public: &str, collections: &[(&str, bool, bool)]) {
+    let http = http();
+    let access_to: Vec<Value> = collections
+        .iter()
+        .map(|(id, ro, hide)| json!({"id": id, "readOnly": ro, "hidePasswords": hide, "manage": false}))
+        .collect();
+    let resp = http
+        .post(format!("{}/api/organizations/{}/users/invite", server_url(), org.id))
+        .bearer_auth(access)
+        .json(
+            &json!({"emails": [email], "type": 2, "collections": access_to, "groups": [], "accessAll": false, "permissions": {}}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "invite: {} {}", resp.status(), resp.text().await.unwrap_or_default());
+    let members: Value = http
+        .get(format!("{}/api/organizations/{}/users", server_url(), org.id))
+        .bearer_auth(access)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let member = members["data"].as_array().unwrap().iter().find(|m| m["email"] == email).expect("invited");
+    let resp = http
+        .post(format!("{}/api/organizations/{}/users/{}/confirm", server_url(), org.id, member["id"].as_str().unwrap()))
+        .bearer_auth(access)
+        .json(&json!({"key": share_key(&org.key, public)}))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "confirm: {} {}", resp.status(), resp.text().await.unwrap_or_default());
 }
 
 /// Turns on authenticator two-step login and returns its base32 key.

@@ -73,6 +73,18 @@ pub struct Collection {
     pub extra: Extra,
 }
 
+impl Collection {
+    /// Items can be added to it, changed in it and removed from it.
+    pub fn writable(&self) -> bool {
+        !flag(&self.extra, "readOnly", false)
+    }
+}
+
+/// A permission flag the server sends; `default` when it's missing (older servers).
+fn flag(extra: &Extra, name: &str, default: bool) -> bool {
+    extra.get(name).and_then(Value::as_bool).unwrap_or(default)
+}
+
 /// Item kinds by their wire number. Unknown numbers are kept, shown as "Other" and not
 /// editable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,6 +217,31 @@ impl Cipher {
 
     pub fn is_deleted(&self) -> bool {
         self.deleted_date.is_some()
+    }
+
+    /// This account may change the item (`edit`; read-only collections say no).
+    pub fn can_edit(&self) -> bool {
+        flag(&self.extra, "edit", true)
+    }
+
+    /// This account may see the item's password, one-time code key and hidden fields
+    /// (`viewPassword`; collections that hide passwords say no).
+    pub fn can_view_password(&self) -> bool {
+        flag(&self.extra, "viewPassword", true)
+    }
+
+    fn permission(&self, name: &str) -> bool {
+        let given = self.extra.get("permissions").and_then(|p| p.get(name)).and_then(Value::as_bool);
+        given.unwrap_or_else(|| self.can_edit())
+    }
+
+    /// This account may move the item to the trash.
+    pub fn can_delete(&self) -> bool {
+        self.permission("delete")
+    }
+
+    pub fn can_restore(&self) -> bool {
+        self.permission("restore")
     }
 
     /// The body for `POST /api/ciphers` (no `last_known`) or `PUT /api/ciphers/{id}`.

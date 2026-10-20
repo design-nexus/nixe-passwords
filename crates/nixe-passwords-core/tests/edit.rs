@@ -10,7 +10,7 @@ mod common;
 use std::num::NonZeroU32;
 
 use nixe_passwords_core::api::{ApiError, Server};
-use nixe_passwords_core::edit::{ItemDraft, LoginDraft};
+use nixe_passwords_core::edit::{ItemDraft, LoginDraft, Place};
 use nixe_passwords_core::model::Kind;
 use nixe_passwords_core::secret::Secret;
 use nixe_passwords_core::session::{self, Session, SessionError, SignIn};
@@ -30,6 +30,7 @@ fn draft(name: &str, password: &str) -> LoginDraft {
         folder: None,
         favorite: true,
         reprompt: false,
+        place: Place::default(),
     }
 }
 
@@ -111,6 +112,15 @@ fn draft_of(item: &Value) -> LoginDraft {
         folder: item["folderId"].as_str().map(|f| f.parse().unwrap()),
         favorite: item["favorite"].as_bool().unwrap(),
         reprompt: item["reprompt"] == 1,
+        place: Place {
+            organization: item["organizationId"].as_str().map(|o| o.parse().unwrap()),
+            collections: item["collectionIds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|c| c.as_str().unwrap().parse().unwrap())
+                .collect(),
+        },
     }
 }
 
@@ -179,7 +189,8 @@ async fn edits_keep_what_other_clients_wrote() {
     };
     let refresh = Secret::new(s.refresh_token().unwrap().expose());
     let access = Secret::new(s.access(&server, &refresh).await.unwrap().expose());
-    let (org, collection) = common::create_org(access.expose(), &email, &public).await;
+    let org = common::create_org(access.expose(), &email, &public).await;
+    let (org, collection) = (org.id, org.collection);
     let bw = common::Bw::login(&email, password);
 
     // Written by bw: the parts this client leaves alone.
@@ -250,6 +261,7 @@ fn item_draft(kind: Kind, name: &str, fields: &[(&str, &str)]) -> ItemDraft {
         folder: None,
         favorite: false,
         reprompt: false,
+        place: Place::default(),
     }
 }
 
@@ -397,4 +409,192 @@ async fn ssh_keys_round_trip_with_bw() {
         Err(SessionError::BadSshKey(nixe_passwords_core::ssh::SshError::Unreadable))
     ));
     assert_eq!(bw.item(&id.to_string())["sshKey"]["keyFingerprint"], made.fingerprint.as_str());
+}
+
+async fn signed_in(store: &mut Store, server: &Server, email: &str, password: &str) -> (Box<Session>, Secret) {
+    let SignIn::Done(s) = session::sign_in(store, server, email, &Secret::new(password), "nixe test", None).await.unwrap() else {
+        panic!("two-step login")
+    };
+    let refresh = Secret::new(s.refresh_token().unwrap().expose());
+    (s, refresh)
+}
+
+fn uuid(v: &Value) -> Uuid {
+    v.as_str().unwrap().parse().unwrap()
+}
+
+/// A member of an organization works within its permissions: read-only items can't be
+/// changed or deleted, hidden passwords can't be revealed or copied (only filled), and
+/// survive edits; items go into writable collections, change collections, and move in
+/// from the personal vault (with and without their own key, with an attachment); they
+/// don't move out. The owner's `bw` checks what the member wrote.
+#[tokio::test]
+#[ignore = "needs NIXE_PW_TEST_SERVER"]
+async fn organizations_and_permissions() {
+    let kdf = bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() };
+    let (owner_email, member_email) = (common::fresh_email("owner"), common::fresh_email("member"));
+    let password = "correct horse org battery";
+    let owner_public = common::register(&owner_email, password, &kdf).await;
+    let member_public = common::register(&member_email, password, &kdf).await;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+
+    // The owner sets up four collections with different rights for the member.
+    let mut owner_store = Store::open(&dir.path().join("owner.sqlite")).unwrap();
+    let (mut owner, owner_refresh) = signed_in(&mut owner_store, &server, &owner_email, password).await;
+    let access = Secret::new(owner.access(&server, &owner_refresh).await.unwrap().expose());
+    let org = common::create_org(access.expose(), &owner_email, &owner_public).await;
+    let team = common::create_collection(access.expose(), &org, "Team").await;
+    let team2 = common::create_collection(access.expose(), &org, "Team 2").await;
+    let vault = common::create_collection(access.expose(), &org, "Vault").await;
+    let masked = common::create_collection(access.expose(), &org, "Masked").await;
+    let rights = [
+        (team.as_str(), false, false),
+        (team2.as_str(), false, false),
+        (vault.as_str(), true, true),
+        (masked.as_str(), false, true),
+    ];
+    common::add_member(access.expose(), &org, &member_email, &member_public, &rights).await;
+    let bw = common::Bw::login(&owner_email, password);
+    let login = |name: &str, collection: &str| {
+        json!({
+            "type": 1, "name": name, "notes": null, "favorite": false, "reprompt": 0, "folderId": null,
+            "organizationId": org.id, "collectionIds": [collection],
+            "fields": [{"name": "pin", "value": "4321", "type": 1}],
+            "login": {"username": "team", "password": format!("canary-{name}-Pw!9"), "totp": "JBSWY3DPEHPK3PXP",
+                      "uris": [{"match": null, "uri": "https://team.example.com"}]},
+        })
+    };
+    let locked = uuid(&bw.create(&login("Locked", &vault))["id"]);
+    let shared = uuid(&bw.create(&login("Shared", &team))["id"]);
+    let masked_id = uuid(&bw.create(&login("Masked", &masked))["id"]);
+    drop(owner);
+
+    let mut store = Store::open(&dir.path().join("member.sqlite")).unwrap();
+    let (mut s, refresh) = signed_in(&mut store, &server, &member_email, password).await;
+    let org_id: Uuid = org.id.parse().unwrap();
+    let not_allowed = |r: Result<(), SessionError>| assert!(matches!(r, Err(SessionError::NotAllowed(_))), "{r:?}");
+
+    // Read-only, passwords hidden: no edits, no trash; no password, code key or hidden
+    // field to see; the current code, and the password for filling, still work.
+    let e = s.view.get(locked).unwrap();
+    assert!(!e.editable && !e.view_password && !e.deletable);
+    for field in [Field::Password, Field::TotpSeed, Field::Custom(0)] {
+        assert_eq!(reveal(&s.keys, &s.snapshot, locked, field).err(), Some(nixe_passwords_core::vault::RevealError::Hidden));
+    }
+    assert_eq!(reveal(&s.keys, &s.snapshot, locked, Field::Totp).unwrap().expose().len(), 6);
+    let filled = nixe_passwords_core::vault::reveal_for_use(&s.keys, &s.snapshot, locked, Field::Password).unwrap();
+    assert_eq!(filled.expose(), "canary-Locked-Pw!9");
+    let mut d = draft("Locked renamed", "x");
+    d.place = Place { organization: Some(org_id), collections: vec![vault.parse().unwrap()] };
+    not_allowed(s.update_login(&mut store, &server, &refresh, locked, &d).await);
+    not_allowed(s.trash(&mut store, &server, &refresh, locked).await);
+
+    // Writable, passwords hidden: a rename keeps the password and code key it can't see.
+    let before = bw.item(&masked_id.to_string());
+    let mut d = draft_of(&s_item(&s, masked_id, &before));
+    d.name = Secret::new("Masked renamed");
+    d.password = None;
+    d.totp = None;
+    s.update_login(&mut store, &server, &refresh, masked_id, &d).await.unwrap();
+    let after = bw.item(&masked_id.to_string());
+    assert_eq!(after["name"], "Masked renamed");
+    assert_eq!(after["login"]["password"], before["login"]["password"]);
+    assert_eq!(after["login"]["totp"], before["login"]["totp"]);
+    assert_eq!(after["passwordHistory"], before["passwordHistory"]);
+
+    // New items go into writable collections only.
+    let mut d = draft("Made by the member", "canary-member-Pw!9");
+    d.place = Place { organization: Some(org_id), collections: vec![team.parse().unwrap()] };
+    let made = s.create_login(&mut store, &server, &refresh, &d).await.unwrap();
+    let item = bw.item(&made.to_string());
+    assert_eq!(
+        (item["organizationId"].as_str(), item["login"]["password"].as_str()),
+        (Some(org.id.as_str()), Some("canary-member-Pw!9"))
+    );
+    assert_eq!(item["collectionIds"], json!([team]));
+    d.place.collections = vec![vault.parse().unwrap()];
+    assert!(matches!(s.create_login(&mut store, &server, &refresh, &d).await, Err(SessionError::NotAllowed(_))));
+
+    // Collections change within the writable ones; an item doesn't leave its organization.
+    let mut d = draft_of(&bw.item(&shared.to_string()));
+    d.place.collections = vec![team.parse().unwrap(), team2.parse().unwrap()];
+    s.update_login(&mut store, &server, &refresh, shared, &d).await.unwrap();
+    let ids: Vec<String> = serde_json::from_value(bw.item(&shared.to_string())["collectionIds"].clone()).unwrap();
+    assert!(ids.len() == 2 && ids.contains(&team) && ids.contains(&team2), "{ids:?}");
+    d.place.collections.push(vault.parse().unwrap());
+    not_allowed(s.update_login(&mut store, &server, &refresh, shared, &d).await);
+    d.place = Place::default();
+    not_allowed(s.update_login(&mut store, &server, &refresh, shared, &d).await);
+
+    // Personal items move in: one without its own key (re-encrypted, attachment and all),
+    // one with (its key rewrapped). The owner reads every field afterwards.
+    let member_bw = common::Bw::login(&member_email, password);
+    let personal = uuid(
+        &member_bw.create(&json!({
+            "type": 1, "name": "Moving in", "notes": "moving notes", "favorite": false, "reprompt": 0, "folderId": null,
+            "fields": [{"name": "recovery", "value": "moving field", "type": 1}],
+            "login": {"username": "mover", "password": "canary-move-Pw!9", "totp": "JBSWY3DPEHPK3PXP",
+                      "uris": [{"match": 1, "uri": "https://move.example.com"}]},
+            "passwordHistory": [{"lastUsedDate": "2026-01-01T00:00:00.000Z", "password": "canary-older-Pw!9"}],
+        }))["id"],
+    );
+    let file = dir.path().join("moving.txt");
+    std::fs::write(&file, "canary moving attachment\n").unwrap();
+    member_bw.attach(&personal.to_string(), &file);
+    let access = Secret::new(s.access(&server, &refresh).await.unwrap().expose());
+    let own_key = {
+        let (mut key, wrapped) = s.keys.new_item(None).unwrap();
+        let body = json!({
+            "type": 1, "name": key.encrypt("Own key moving in").unwrap(), "notes": null, "folderId": null,
+            "organizationId": null, "key": wrapped, "favorite": false, "reprompt": 0, "passwordHistory": null, "fields": null,
+            "login": {"username": key.encrypt("own").unwrap(), "password": key.encrypt("canary-own-Pw!9").unwrap(), "totp": null, "uris": null},
+            "encryptedFor": s.snapshot.profile.id,
+        });
+        drop(key);
+        server.create_cipher(&access, &body).await.unwrap().id
+    };
+    s.sync(&mut store, &server, &refresh).await.unwrap();
+    let before = member_bw.item(&personal.to_string());
+    for id in [personal, own_key] {
+        let mut d = draft_of(&member_bw.item(&id.to_string()));
+        d.place = Place { organization: Some(org_id), collections: vec![team.parse().unwrap()] };
+        s.update_login(&mut store, &server, &refresh, id, &d).await.unwrap();
+    }
+    let moved = bw.item(&personal.to_string());
+    assert_eq!(moved["organizationId"], org.id.as_str());
+    for path in [
+        &["name"][..],
+        &["notes"],
+        &["fields"],
+        &["passwordHistory"],
+        &["login", "username"],
+        &["login", "password"],
+        &["login", "totp"],
+        &["login", "uris"],
+    ] {
+        let (mut a, mut b) = (&moved, &before);
+        for key in path {
+            a = &a[*key];
+            b = &b[*key];
+        }
+        assert_eq!(a, b, "{path:?}");
+    }
+    assert_eq!(bw.attachment(&personal.to_string(), "moving.txt"), b"canary moving attachment\n");
+    let moved = bw.item(&own_key.to_string());
+    assert_eq!(
+        (moved["organizationId"].as_str(), moved["login"]["password"].as_str()),
+        (Some(org.id.as_str()), Some("canary-own-Pw!9"))
+    );
+}
+
+/// `bw`'s view of an item, with the password this account can't see taken out, as the
+/// window's draft would have it.
+fn s_item(s: &Session, id: Uuid, item: &Value) -> Value {
+    let mut item = item.clone();
+    if !s.view.get(id).unwrap().view_password {
+        item["login"]["password"] = Value::Null;
+        item["login"]["totp"] = Value::Null;
+    }
+    item
 }
