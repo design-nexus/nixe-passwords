@@ -84,7 +84,8 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     let sidebar = w::vbox(0);
     sidebar.set_hexpand(false); // Required: expanding labels must not expand the sidebar.
     sidebar.add_css_class("settings-navigation");
-    let head = chrome::sidebar_head("Passwords", Some("Find (Ctrl+F)"));
+    // Search lives in the list toolbar, always there, so the head has no search button.
+    let head = chrome::sidebar_head("Passwords", None);
     sidebar.append(&head.root);
     let nav = w::vbox(0);
     nav.set_hexpand(false);
@@ -113,24 +114,19 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     pages.add_named(&scroll(&account), Some("account"));
 
     let vault = w::vbox(0);
-    let search = gtk::SearchEntry::new();
-    search.set_placeholder_text(Some("Search the vault…"));
-    search.set_visible(false);
-    vault.append(&chrome::search_strip(&search));
     let toolbar = w::hbox(6);
     toolbar.add_css_class("list-toolbar");
     vault.append(&toolbar);
-    let new = gtk::Button::new();
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some("Search the vault (Ctrl+F)"));
+    search.set_hexpand(true);
+    toolbar.append(&search);
+    let security_bar = w::hbox(0);
+    toolbar.append(&security_bar);
+    let new = gtk::Button::from_icon_name("list-add-symbolic");
     new.add_css_class("suggested-action");
     new.set_tooltip_text(Some("New item (Ctrl+N)"));
-    let new_content = w::hbox(8);
-    new_content.append(&gtk::Image::from_icon_name("list-add-symbolic"));
-    new_content.append(&gtk::Label::new(Some("New item")));
-    new.set_child(Some(&new_content));
     toolbar.append(&new);
-    let security_bar = w::hbox(0);
-    security_bar.set_hexpand(true);
-    toolbar.append(&security_bar);
     let panes = w::hbox(0);
     panes.set_vexpand(true);
     vault.append(&panes);
@@ -241,12 +237,29 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
         prefs::update(|p| p.sidebar_collapsed = !p.sidebar_collapsed);
         layout(&u);
     });
-    if let Some(b) = head.search {
-        let u = ui.clone();
-        b.connect_clicked(move |_| find(&u));
-    }
     let u = ui.clone();
     ui.search.connect_search_changed(move |_| refresh_list(&u));
+    // Enter opens the first match; Down moves into the list.
+    let u = ui.clone();
+    ui.search.connect_activate(move |_| {
+        if let Some(row) = u.list.row_at_index(0).filter(|r| r.is_selectable()) {
+            u.list.select_row(Some(&row));
+            u.showing_detail.set(true);
+            layout(&u);
+        }
+    });
+    let keys = gtk::EventControllerKey::new();
+    let u = ui.clone();
+    keys.connect_key_pressed(move |_, key, _, _| {
+        if key == gdk::Key::Down
+            && let Some(row) = u.list.row_at_index(0)
+        {
+            row.grab_focus();
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    });
+    ui.search.add_controller(keys);
     let u = ui.clone();
     ui.list.connect_selected_rows_changed(move |list| {
         if u.rebuilding.get() {
@@ -296,9 +309,9 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
             gdk::Key::Escape => {
                 if nixe_ui::settings_card::is_open() {
                     nixe_ui::settings_card::escape();
-                } else if u.search.is_visible() {
+                } else if !u.search.text().is_empty() {
                     u.search.set_text("");
-                    u.search.set_visible(false);
+                    u.search.grab_focus();
                 } else {
                     u.showing_detail.set(false);
                     layout(&u);
@@ -376,6 +389,7 @@ pub fn set_state(ui: &Ui, st: &str) {
     if open {
         ui.pages.set_visible_child_name("vault");
         reload(ui);
+        ui.search.grab_focus();
     } else {
         // Nothing of the vault stays in the window once it's locked.
         *ui.listing.borrow_mut() = Listing::default();
@@ -387,7 +401,6 @@ pub fn set_state(ui: &Ui, st: &str) {
             e.destroy();
         }
         ui.search.set_text("");
-        ui.search.set_visible(false);
         ui.pages.set_visible_child_name("account");
         if changed || st.is_empty() {
             account::show(ui, st);
@@ -457,6 +470,7 @@ pub fn navigate(ui: &Ui, section: &str) {
     refresh_list(ui);
     nav(ui);
     detail::show(ui);
+    ui.search.grab_focus();
 }
 
 /// The entries shown for the current section and search, in name order.
@@ -725,8 +739,8 @@ fn compact_sidebar(ui: &Ui) {
 }
 
 fn find(ui: &Ui) {
-    ui.search.set_visible(true);
     ui.search.grab_focus();
+    ui.search.select_region(0, -1);
 }
 
 fn install_icons() {
@@ -818,7 +832,7 @@ pub const SHORTCUTS: &[(&[&str], &str)] = &[
     (&["Ctrl", "B"], "Collapse sidebar"),
     (&["Ctrl", ","], "Settings"),
     (&["Ctrl", "Shift", "P"], "Command palette"),
-    (&["Esc"], "Close search, card, or return to the list"),
+    (&["Esc"], "Clear the search, close a card, or return to the list"),
     (&["F1"], "Show these shortcuts (or ?)"),
     (&["Ctrl", "Q"], "Quit Passwords"),
     (&["Ctrl", "W"], "Close window"),

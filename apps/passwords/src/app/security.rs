@@ -8,7 +8,7 @@ use nixe_ui::widgets as w;
 
 use super::client;
 use super::data::Entry;
-use super::ui::{self, Ui, label};
+use super::ui::{self, Ui};
 
 #[derive(Debug, Clone, serde::Deserialize)]
 struct Finding {
@@ -95,15 +95,11 @@ pub fn refresh(ui: &Ui) {
     });
 }
 
-/// The toolbar's part in the Security section: what the list is, and the breach check.
+/// The toolbar's part in the Security section: the breach check.
 pub fn toolbar(ui: &Ui) -> gtk::Box {
-    let bar = w::hbox(8);
-    bar.set_hexpand(true);
-    let note = label("Worked out on this device.", "dim");
-    note.set_hexpand(true);
-    bar.append(&note);
-    let check = w::labeled_button("security-high-symbolic", "Check for breaches…");
-    check.set_tooltip_text(Some("Look up your passwords in Have I Been Pwned's breach data"));
+    let bar = w::hbox(0);
+    let check = gtk::Button::from_icon_name("security-high-symbolic");
+    check.set_tooltip_text(Some("Check for breaches: look up your passwords in Have I Been Pwned's breach data"));
     let u = ui.clone();
     check.connect_clicked(move |b| ask_and_check(&u, b));
     bar.append(&check);
