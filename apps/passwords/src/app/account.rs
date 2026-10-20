@@ -291,7 +291,39 @@ fn unlock_page(ui: &Ui) {
     sign_out.set_tooltip_text(Some("Remove this account and its local copy from this device"));
     let go = gtk::Button::with_label("Unlock");
     go.add_css_class("suggested-action");
-    card.append(&buttons(&[&sign_out, &go]));
+    // Shown when a key is saved in the keyring (Settings, "Unlock with the keyring").
+    let keyring = gtk::Button::with_label("Use the keyring");
+    keyring.set_tooltip_text(Some("Unlock with the key saved in your desktop keyring"));
+    keyring.set_visible(false);
+    card.append(&buttons(&[&sign_out, &keyring, &go]));
+    let k = keyring.clone();
+    glib::spawn_future_local(async move {
+        if let Ok(v) = client::call("KeyringUnlock", None).await {
+            k.set_visible(v.get::<(bool,)>().is_some_and(|(on,)| on));
+        }
+    });
+    let (u, e) = (ui.clone(), err.clone());
+    keyring.connect_clicked(move |b| {
+        busy(b, "Unlocking…");
+        show_error(&e, "");
+        let (ui, err, b) = (u.clone(), e.clone(), b.clone());
+        glib::spawn_future_local(async move {
+            let reply = client::call("UnlockWithKeyring", None).await;
+            b.set_sensitive(true);
+            b.set_label("Use the keyring");
+            match reply {
+                Ok(_) => {
+                    ui::set_state(&ui, state::UNLOCKED);
+                    ui::sync(&ui);
+                }
+                Err(e) if e.is(Code::LoggedOut) => ui::set_state(&ui, state::LOGGED_OUT),
+                Err(e) => {
+                    show_error(&err, &e.to_string());
+                    b.set_visible(false);
+                }
+            }
+        });
+    });
     let submit = {
         let (ui, password, err, go) = (ui.clone(), password.clone(), err.clone(), go.clone());
         move || {

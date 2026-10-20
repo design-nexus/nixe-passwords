@@ -53,8 +53,19 @@ async fn sign_in_unlock_sync() {
         session::unlock(&mut store, &Secret::new("nope")).await.err(),
         Some(SessionError::Crypto(CryptoError::WrongPassword))
     );
-    let mut s = session::unlock(&mut store, &password).await.unwrap();
+    let s = session::unlock(&mut store, &password).await.unwrap();
     assert!(s.tokens.is_none() && s.keys.is_unlocked());
+
+    // Unlocking with the user key, as the keyring option does; a key that doesn't fit
+    // the account is refused.
+    let exported = s.keys.export_user_key().unwrap();
+    let entries = s.view.entries.len();
+    s.lock();
+    let mut s = session::unlock_with_key(&mut store, &exported).unwrap();
+    assert!(s.keys.is_unlocked() && s.view.entries.len() == entries);
+    let other = Secret::new(bitwarden_encoding::B64::from(vec![7u8; 64]).to_string());
+    assert_eq!(session::unlock_with_key(&mut store, &other).err(), Some(SessionError::KeysChanged));
+    assert_eq!(session::unlock_with_key(&mut store, &Secret::new("not a key")).err(), Some(SessionError::KeysChanged));
 
     // Online again with only the refresh token.
     s.sync(&mut store, &server(), &refresh).await.unwrap();

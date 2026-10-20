@@ -186,6 +186,26 @@ impl Keys {
         Ok(keys)
     }
 
+    /// The user key, base64: what "unlock with the system keyring" keeps there.
+    pub fn export_user_key(&self) -> Result<Secret> {
+        let ctx = self.store.context();
+        #[allow(deprecated)] // the export this feature exists for
+        let key = ctx.dangerous_get_symmetric_key(Symmetric::User).map_err(|_| CryptoError::MissingKey)?;
+        Ok(Secret::new(key.to_base64().to_string()))
+    }
+
+    /// Opens with a user key from `export_user_key`, in place of the master password.
+    pub fn from_user_key(exported: &Secret) -> Result<Keys> {
+        let user = bw::SymmetricCryptoKey::try_from(exported.expose().to_string()).map_err(|_| CryptoError::Malformed)?;
+        let keys = Keys { store: bw::KeyStore::default() };
+        {
+            let mut ctx = keys.store.context_mut();
+            let local = ctx.add_local_symmetric_key(user);
+            ctx.persist_symmetric_key(local, Symmetric::User).map_err(|_| CryptoError::MissingKey)?;
+        }
+        Ok(keys)
+    }
+
     /// Adds the account's private key (`profile.privateKey`, wrapped by the user key),
     /// needed for organization keys.
     pub fn add_private_key(&self, wrapped: &str) -> Result<()> {

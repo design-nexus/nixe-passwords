@@ -24,6 +24,16 @@ struct Scratch {
 
 impl Scratch {
     fn start(extra_settings: &str) -> Scratch {
+        Self::start_in(extra_settings, false)
+    }
+
+    /// With a keyring of its own: a private session bus with gnome-keyring on it, its
+    /// files in the scratch home. Never the user's keyring.
+    fn start_with_keyring(extra_settings: &str) -> Scratch {
+        Self::start_in(extra_settings, true)
+    }
+
+    fn start_in(extra_settings: &str, keyring: bool) -> Scratch {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
@@ -40,15 +50,38 @@ impl Scratch {
         for d in ["run", "data", "empty"] {
             std::fs::create_dir_all(dir.path().join(d)).unwrap();
         }
-        let daemon = Command::new(bin.join("nixe-passwordsd"))
-            .env_clear()
-            .env("HOME", dir.path())
-            .env("PATH", dir.path().join("empty"))
-            .env("XDG_RUNTIME_DIR", dir.path().join("run"))
-            .env("XDG_CONFIG_HOME", dir.path().join("config"))
-            .env("XDG_DATA_HOME", dir.path().join("data"))
-            .spawn()
-            .unwrap();
+        let daemon_path = bin.join("nixe-passwordsd");
+        let mut command = if keyring {
+            // `--login` makes and unlocks a "login" keyring from the password on stdin, so
+            // nothing ever asks to create one; then the daemon runs on that bus.
+            let script = format!(
+                "printf scratch | gnome-keyring-daemon --login >/dev/null && \
+                 gnome-keyring-daemon --start --components=secrets >/dev/null && exec '{}'",
+                daemon_path.display()
+            );
+            let mut c = Command::new("dbus-run-session");
+            c.args(["--", "sh", "-c", &script]).env("PATH", "/usr/bin");
+            c
+        } else {
+            let mut c = Command::new(&daemon_path);
+            c.env("PATH", dir.path().join("empty"));
+            c
+        };
+        let daemon = std::os::unix::process::CommandExt::process_group(
+            command
+                .env_remove("DBUS_SESSION_BUS_ADDRESS")
+                // No display either: a keyring prompt must never reach the user's screen.
+                .env_remove("WAYLAND_DISPLAY")
+                .env_remove("DISPLAY")
+                .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+                .env("HOME", dir.path())
+                .env("XDG_RUNTIME_DIR", dir.path().join("run"))
+                .env("XDG_CONFIG_HOME", dir.path().join("config"))
+                .env("XDG_DATA_HOME", dir.path().join("data")),
+            0,
+        )
+        .spawn()
+        .unwrap();
         let s = Scratch { dir, daemon };
         let deadline = Instant::now() + Duration::from_secs(10);
         while !s.socket().exists() {
@@ -117,8 +150,9 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        // SAFETY: signalling our own child.
-        unsafe { libc::kill(self.daemon.id() as i32, libc::SIGTERM) };
+        // SAFETY: signalling our own child's process group (the daemon, and with a
+        // keyring the bus and gnome-keyring too).
+        unsafe { libc::kill(-(self.daemon.id() as i32), libc::SIGTERM) };
         let _ = self.daemon.wait();
     }
 }
@@ -153,7 +187,7 @@ async fn call_one(conn: &zbus::Connection, call: &[Value]) -> Value {
     let method = call[0].as_str().unwrap();
     let s = |i: usize| call[i].as_str().unwrap().to_string();
     let reply = match method {
-        "Status" | "Lock" | "Sync" | "List" | "Generate" | "SignOut" | "Pairings" => {
+        "Status" | "Lock" | "Sync" | "List" | "Generate" | "SignOut" | "Pairings" | "KeyringUnlock" | "UnlockWithKeyring" => {
             conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &()).await
         }
         "Search" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), call[2].as_u64().unwrap() as u32)).await,
@@ -163,6 +197,7 @@ async fn call_one(conn: &zbus::Connection, call: &[Value]) -> Value {
         }
         "SignIn" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2), s(3), 255u8, String::new())).await,
         "Attachments" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1),)).await,
+        "SetKeyringUnlock" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(call[1].as_bool().unwrap(),)).await,
         "DeleteAttachment" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2))).await,
         // [method, id, name or attachment, path]: the file goes as a handle.
         "AddAttachment" | "SaveAttachment" => {
@@ -182,6 +217,7 @@ async fn call_one(conn: &zbus::Connection, call: &[Value]) -> Value {
                 "s" => json!({"ok": body.deserialize::<String>().unwrap()}),
                 "u" => json!({"ok": body.deserialize::<u32>().unwrap()}),
                 "t" => json!({"ok": body.deserialize::<u64>().unwrap()}),
+                "b" => json!({"ok": body.deserialize::<bool>().unwrap()}),
                 "ssu" | "(ssu)" => json!({"ok": body.deserialize::<(String, String, u32)>().unwrap()}),
                 "a(ssssbs)" => {
                     json!({"ok": body.deserialize::<Vec<(String, String, String, String, bool, String)>>().unwrap()})
@@ -666,4 +702,56 @@ async fn paired_browser() {
     assert!(app[0].get("ok").is_some() && app[1].get("ok").is_some());
     let r = s.as_browser(r#"[{"r":"status"}]"#);
     assert_eq!(r[0]["t"], "unknown");
+}
+
+/// Unlocking with the keyring, against a keyring of the test's own: off at first; turned
+/// on, the vault opens after a lock without the master password; turned off, it doesn't.
+#[tokio::test]
+#[ignore = "needs NIXE_PW_TEST_SERVER"]
+async fn keyring_unlock() {
+    let (server, ca) = test_server().expect("NIXE_PW_TEST_SERVER and NIXE_PW_TEST_CA");
+    if ["dbus-run-session", "gnome-keyring-daemon", "secret-tool"].iter().any(|t| !Path::new("/usr/bin").join(t).exists()) {
+        eprintln!("skipped: needs dbus-run-session, gnome-keyring-daemon and secret-tool");
+        return;
+    }
+    let email = format!("keyring-{}@example.com", &uuid::Uuid::new_v4().simple().to_string()[..10]);
+    let password = "correct horse keyring battery";
+    register(&server, &ca, &email, password).await;
+    let s = Scratch::start_with_keyring(&format!("extra_ca = {:?}\n", ca.display().to_string()));
+    let draft = json!({"name": "GitHub", "username": "octo", "password": "canary-keyring-Pw!9"}).to_string();
+    let app = s.as_peer(
+        "nixe-passwords",
+        json!([
+            ["SignIn", server, email, password],
+            ["CreateLogin", draft],
+            ["KeyringUnlock"],
+            ["SetKeyringUnlock", true],
+            ["KeyringUnlock"],
+            ["Lock"],
+            ["Search", "git", 5],
+            ["UnlockWithKeyring"],
+            ["Search", "git", 5],
+            ["Status"]
+        ]),
+    );
+    assert_eq!(ok(&app[0])[0], true, "{:?}", app[0]);
+    assert_eq!(ok(&app[2]), false);
+    ok(&app[3]);
+    assert_eq!(ok(&app[4]), true);
+    assert_eq!(err(&app[6]), "Locked");
+    ok(&app[7]);
+    assert_eq!(ok(&app[8]).as_array().unwrap().len(), 1);
+    assert_eq!(ok(&app[9])[0], "unlocked");
+    // Glimpse can't unlock or turn it on.
+    let g = s.as_peer("nixe-glimpse", json!([["UnlockWithKeyring"], ["SetKeyringUnlock", true]]));
+    assert_eq!((err(&g[0]), err(&g[1])), ("Denied", "Denied"));
+
+    let app = s.as_peer(
+        "nixe-passwords",
+        json!([["SetKeyringUnlock", false], ["Lock"], ["KeyringUnlock"], ["UnlockWithKeyring"], ["Status"]]),
+    );
+    ok(&app[0]);
+    assert_eq!(ok(&app[2]), false);
+    assert_eq!(err(&app[3]), "Failed");
+    assert_eq!(ok(&app[4])[0], "locked");
 }

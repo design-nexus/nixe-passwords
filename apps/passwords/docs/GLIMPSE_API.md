@@ -81,6 +81,12 @@ Item ids are not secret, but the list reveals usage, so it isn't written to disk
 | `SignIn` | `(s server, s email, s password, y method, s code) → (b done, a(ys) methods)` | `method` 255: no two-step answer. Not done: ask for one of `methods` (number, masked hint) and call again |
 | `SendEmailCode` | `(s server, s email, s password) → ()` | For two-step login by email |
 | `Unlock` | `(s password) → ()` | From the local copy; a sync follows in the background |
+| `UnlockWithKeyring` | `() → ()` | With the user key saved in the desktop keyring; a stale key is removed and refused |
+| `KeyringUnlock` | `() → b` | Whether a key for unlocking is saved in the keyring |
+| `SetKeyringUnlock` | `(b on) → ()` | On: saves the user key there (the vault must be unlocked). Off: removes it. Signing out and a key change elsewhere remove it too |
+| `UnlockWithKeyring` | `() → ()` | With the user key saved in the desktop keyring; a stale key is removed and refused |
+| `KeyringUnlock` | `() → b` | Whether a key for unlocking is saved in the keyring |
+| `SetKeyringUnlock` | `(b on) → ()` | On: saves the user key there (the vault must be unlocked). Off: removes it. Signing out and a key change elsewhere remove it too |
 | `VerifyPassword` | `(s password) → ()` | For items that ask for the master password again |
 | `SignOut` | `() → ()` | Removes the account, the local copy and the saved token |
 | `Sync` | `() → ()` | Also allowed for the Settings page |

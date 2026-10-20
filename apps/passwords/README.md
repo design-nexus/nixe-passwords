@@ -36,6 +36,10 @@ the vault syncs. Two-step login works with an authenticator app or an emailed co
 - Attachments: saves them to a file you choose, attaches files (up to 100 MB), and
   deletes them. Nothing decrypted goes to a temporary file.
 - Works offline from the local copy; edits need the server.
+- Can unlock with your desktop keyring instead of the master password, if you turn that
+  on. The setting explains what that gives up.
+- Can unlock with your desktop keyring instead of the master password, if you turn that
+  on. The setting explains what that gives up.
 
 Custom fields can be viewed and copied but not yet edited here, and SSH keys with a
 passphrase can't be imported yet.

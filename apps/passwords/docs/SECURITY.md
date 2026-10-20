@@ -14,6 +14,8 @@ can't meet a rule, the change waits; the rule doesn't bend.
 | Decrypted metadata (names, usernames, URIs, folder names) | Daemon memory while unlocked; shown in the app and in Glimpse results |
 | Access token | Daemon memory |
 | Refresh token | Secret Service |
+| User key | Secret Service, only while "Unlock with the keyring" is on (off by default). Then anyone who can use the logged-in session, including programs running as the user, can open the vault; the setting says so |
+| User key | Secret Service, only while "Unlock with the keyring" is on (off by default). Then anyone who can use the logged-in session, including programs running as the user, can open the vault; the setting says so |
 | Encrypted snapshot | `vault.sqlite` (0600), the same ciphertext the server keeps |
 
 Metadata counts as sensitive. It isn't a secret like a password, but it is never

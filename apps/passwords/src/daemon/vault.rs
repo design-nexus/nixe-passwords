@@ -382,21 +382,77 @@ impl Vault {
                 return Ok(());
             }
             let session = session::unlock(&mut st.store, &password).await?;
-            let extra_ca = st.settings.refresh().extra_ca.clone();
-            st.server = make_server(&session.account.server, extra_ca.as_deref()).ok();
-            if st.refresh.is_none() {
-                let entry = keyring::Entry { server: session.account.server.clone(), email: session.account.email.clone() };
-                st.refresh = tokio::task::spawn_blocking(move || entry.load()).await.ok().and_then(|r| r.ok().flatten());
-            }
-            st.session = Some(session);
-            st.last_used = Instant::now();
-            super::browser::load(&mut st);
+            opened(&mut st, session).await;
         }
+        self.sync_soon();
+        Ok(())
+    }
+
+    /// Unlocks with the user key saved in the desktop keyring, when that's turned on. A
+    /// stale key (the master password changed elsewhere) is removed.
+    pub async fn unlock_with_keyring(self: &Arc<Self>, scope: Scope) -> Result<()> {
+        need(scope, Scope::App)?;
+        {
+            let mut st = self.state.lock().await;
+            if st.session.is_some() {
+                return Ok(());
+            }
+            let entry = unlock_entry(&st).ok_or_else(|| Failure::new(Code::LoggedOut, "not signed in"))?;
+            let (entry, saved) = tokio::task::spawn_blocking(move || {
+                let saved = entry.load_unlock_key();
+                (entry, saved)
+            })
+            .await
+            .map_err(|_| Failure::new(Code::Failed, "the keyring couldn't be read"))?;
+            let key = saved
+                .map_err(|e| Failure::new(Code::Failed, e.to_string()))?
+                .ok_or_else(|| Failure::new(Code::Failed, "unlocking with the keyring isn't set up"))?;
+            let session = match session::unlock_with_key(&mut st.store, &key) {
+                Ok(s) => s,
+                Err(SessionError::KeysChanged) => {
+                    let _ = tokio::task::spawn_blocking(move || entry.clear_unlock_key()).await;
+                    return Err(Failure::new(Code::Failed, "the saved key no longer fits: unlock with the master password"));
+                }
+                Err(e) => return Err(e.into()),
+            };
+            opened(&mut st, session).await;
+        }
+        self.sync_soon();
+        Ok(())
+    }
+
+    /// Whether a key for unlocking is saved in the keyring for this account.
+    pub async fn keyring_unlock(&self, scope: Scope) -> Result<bool> {
+        need(scope, Scope::App)?;
+        let Some(entry) = unlock_entry(&*self.state.lock().await) else { return Ok(false) };
+        let saved = tokio::task::spawn_blocking(move || entry.load_unlock_key()).await.ok().and_then(|r| r.ok().flatten());
+        Ok(saved.is_some())
+    }
+
+    /// Turns unlocking with the keyring on (saving the user key there; the vault must be
+    /// unlocked) or off (removing it).
+    pub async fn set_keyring_unlock(&self, scope: Scope, on: bool) -> Result<()> {
+        need(scope, Scope::App)?;
+        let st = self.state.lock().await;
+        let entry = unlock_entry(&st).ok_or_else(|| Failure::new(Code::LoggedOut, "not signed in"))?;
+        let saved = if on {
+            let key = st.session.as_ref().ok_or_else(locked)?.keys.export_user_key().map_err(SessionError::from)?;
+            drop(st);
+            tokio::task::spawn_blocking(move || entry.save_unlock_key(&key)).await
+        } else {
+            drop(st);
+            tokio::task::spawn_blocking(move || entry.clear_unlock_key()).await
+        };
+        saved
+            .map_err(|_| Failure::new(Code::Failed, "the keyring couldn't be reached"))?
+            .map_err(|e| Failure::new(Code::Failed, e.to_string()))
+    }
+
+    fn sync_soon(self: &Arc<Self>) {
         let me = self.clone();
         tokio::spawn(async move {
             let _ = me.sync(Scope::App).await;
         });
-        Ok(())
     }
 
     /// Fetches the vault without holding the lock, then applies it. A fetch that began
@@ -439,7 +495,14 @@ impl Vault {
             if st.edits != edits {
                 continue;
             }
-            session.apply(&mut st.store, sync)?;
+            let applied = session.apply(&mut st.store, sync);
+            if applied == Err(SessionError::KeysChanged)
+                && let Some(entry) = unlock_entry(st)
+            {
+                // A key saved for unlocking is stale now too.
+                tokio::task::spawn_blocking(move || entry.clear_unlock_key());
+            }
+            applied?;
             return Ok(());
         }
         Err(Failure::new(Code::Failed, "the vault kept changing during sync; try again"))
@@ -452,7 +515,11 @@ impl Vault {
         let mut st = self.state.lock().await;
         if let Some(account) = st.store.account().ok().flatten() {
             let entry = keyring::Entry { server: account.server, email: account.email };
-            let _ = tokio::task::spawn_blocking(move || entry.clear()).await;
+            let _ = tokio::task::spawn_blocking(move || {
+                let _ = entry.clear_unlock_key();
+                entry.clear()
+            })
+            .await;
         }
         st.store.clear().map_err(|e| Failure::new(Code::Failed, e.to_string()))?;
         st.refresh = None;
@@ -739,6 +806,26 @@ pub(super) fn need(scope: Scope, wanted: Scope) -> Result<()> {
 
 fn need_any(scope: Scope, wanted: &[Scope]) -> Result<()> {
     if wanted.contains(&scope) { Ok(()) } else { Err(denied()) }
+}
+
+/// After an unlock: the server, the saved session token, browser pairings.
+async fn opened(st: &mut State, session: Session) {
+    let extra_ca = st.settings.refresh().extra_ca.clone();
+    st.server = make_server(&session.account.server, extra_ca.as_deref()).ok();
+    if st.refresh.is_none() {
+        let entry = keyring::Entry { server: session.account.server.clone(), email: session.account.email.clone() };
+        st.refresh = tokio::task::spawn_blocking(move || entry.load()).await.ok().and_then(|r| r.ok().flatten());
+    }
+    st.session = Some(session);
+    st.last_used = Instant::now();
+    super::browser::load(st);
+}
+
+/// The keyring entry for the signed-in account, from the local copy (so it works while
+/// locked).
+fn unlock_entry(st: &State) -> Option<keyring::Entry> {
+    let account = st.store.account().ok().flatten()?;
+    Some(keyring::Entry { server: account.server, email: account.email })
 }
 
 /// Searching and copying: the app always; Glimpse and the Assistant when their

@@ -161,6 +161,23 @@ pub async fn unlock(store: &mut Store, password: &Secret) -> Result<Session> {
     Ok(Session { account, keys, snapshot, view, tokens: None })
 }
 
+/// Unlocks from the local copy with a user key saved by `Keys::export_user_key`. A key
+/// that no longer opens the account's private key is stale (the master password changed
+/// or the keys were rotated elsewhere): `KeysChanged`.
+pub fn unlock_with_key(store: &mut Store, user_key: &Secret) -> Result<Session> {
+    let account = store.account()?.ok_or(SessionError::SignedOut)?;
+    let snapshot = store.snapshot()?.ok_or(SessionError::SignedOut)?;
+    let keys = Keys::from_user_key(user_key).map_err(|_| SessionError::KeysChanged)?;
+    match snapshot.profile.private_key.as_deref() {
+        Some(private) => keys.add_private_key(private).map_err(|_| SessionError::KeysChanged)?,
+        // Nothing to check the key against: refuse rather than open a vault it may not fit.
+        None => return Err(SessionError::KeysChanged),
+    }
+    add_organizations(&keys, &snapshot);
+    let view = View::build(&keys, &snapshot);
+    Ok(Session { account, keys, snapshot, view, tokens: None })
+}
+
 impl Session {
     /// Fetches the vault and replaces the local copy. Gets a fresh access token from
     /// `refresh` first when there is none or it's about to run out.

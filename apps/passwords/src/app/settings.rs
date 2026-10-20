@@ -1,9 +1,13 @@
 //! The settings card. Vault, clipboard and generator settings are read by the daemon
 //! from the same file, within a second of a change.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gtk::{glib, prelude::*};
 use nixe_ui::widgets as w;
 
+use super::client;
 use super::prefs;
 use super::theme;
 use super::ui::{self, Ui, label};
@@ -45,6 +49,48 @@ fn switch(rows: &gtk::Box, title: &str, desc: &str, on: bool, set: impl Fn(&mut 
     rows.append(&row);
 }
 
+/// "Unlock with the keyring". Not a preference: the daemon saves the vault's key in the
+/// desktop keyring or removes it, and the switch shows which is the case.
+fn keyring_row(ui: &Ui) -> gtk::Box {
+    let (row, sw) = w::switch_row(
+        "Unlock with the keyring",
+        "Keep the vault's key in your desktop keyring, which opens when you log in, and unlock without the master password. \
+         Anyone using your session, and any program running as you, can then open the vault too: leave it off on shared \
+         or unattended computers.",
+        false,
+        |_| {},
+    );
+    // Set while the switch is moved from here rather than by the user.
+    let quiet = Rc::new(Cell::new(true));
+    let (s, q) = (sw.clone(), quiet.clone());
+    glib::spawn_future_local(async move {
+        let on = client::call("KeyringUnlock", None).await.ok().and_then(|v| v.get::<(bool,)>()).is_some_and(|(on,)| on);
+        s.set_active(on);
+        q.set(false);
+    });
+    let u = ui.clone();
+    sw.connect_active_notify(move |s| {
+        if quiet.get() {
+            return;
+        }
+        let (ui, s, quiet, on) = (u.clone(), s.clone(), quiet.clone(), s.is_active());
+        glib::spawn_future_local(async move {
+            match client::call("SetKeyringUnlock", Some((on,).to_variant())).await {
+                Ok(_) => {
+                    ui::toast(&ui, if on { "The keyring can unlock the vault now." } else { "The key is gone from the keyring." })
+                }
+                Err(e) => {
+                    ui::toast(&ui, &e.to_string());
+                    quiet.set(true);
+                    s.set_active(!on);
+                    quiet.set(false);
+                }
+            }
+        });
+    });
+    row
+}
+
 pub fn open(ui: &Ui) {
     let p = prefs::get();
     let v = p.vault.clone();
@@ -80,6 +126,7 @@ pub fn open(ui: &Ui) {
     switch(&g, "Lock on sleep", "Lock the vault before the computer suspends.", v.lock_on_sleep, |p, x| {
         p.vault.lock_on_sleep = x
     });
+    g.append(&keyring_row(ui));
     choice(
         &g,
         "Sync",
@@ -290,7 +337,7 @@ pub fn open(ui: &Ui) {
                 ("Vault", "dialog-password-symbolic", "Locking, sync, server"),
                 ("Clipboard", "edit-paste-symbolic", "Clearing, notifications"),
                 ("Generator", "media-playlist-shuffle-symbolic", "Passwords and passphrases"),
-                ("Integrations", "system-search-symbolic", "Glimpse"),
+                ("Integrations", "system-search-symbolic", "Glimpse, Nixe Assistant"),
                 ("Browsers", "web-browser-symbolic", "Paired browsers, the extension"),
                 ("Passwords window", "applications-graphics-symbolic", "Theme and motion"),
                 ("Keyboard", "input-keyboard-symbolic", "Shortcuts"),

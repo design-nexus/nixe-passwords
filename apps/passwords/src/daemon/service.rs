@@ -222,6 +222,21 @@ impl Service {
         Ok(self.vault.delete_attachment(self.scope, &id, &attachment).await?)
     }
 
+    /// Unlocks with the key saved in the desktop keyring.
+    async fn unlock_with_keyring(&self) -> Result<(), Error> {
+        Ok(self.vault.unlock_with_keyring(self.scope).await?)
+    }
+
+    /// Whether unlocking with the keyring is set up.
+    async fn keyring_unlock(&self) -> Result<bool, Error> {
+        Ok(self.vault.keyring_unlock(self.scope).await?)
+    }
+
+    /// Turns unlocking with the keyring on (the vault must be unlocked) or off.
+    async fn set_keyring_unlock(&self, on: bool) -> Result<(), Error> {
+        Ok(self.vault.set_keyring_unlock(self.scope, on).await?)
+    }
+
     async fn trash(&self, id: String) -> Result<(), Error> {
         Ok(self.vault.trash(self.scope, &id, false).await?)
     }

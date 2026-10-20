@@ -1,6 +1,7 @@
-//! The refresh token in the desktop keyring (Secret Service, through `secret-tool`). The
-//! token goes in on stdin and comes back on stdout, never in arguments; the arguments
-//! hold only the server and email, which name the entry.
+//! The desktop keyring (Secret Service, through `secret-tool`): the refresh token, and,
+//! when "unlock with the system keyring" is on, the vault's user key. Secrets go in on
+//! stdin and come back on stdout, never in arguments; the arguments hold only the
+//! server and email, which name the entry, and which of the two it is.
 
 use std::fmt;
 use std::io::{Read, Write};
@@ -29,27 +30,67 @@ impl fmt::Display for KeyringError {
 
 impl std::error::Error for KeyringError {}
 
-/// Where the refresh token of one account lives.
+/// Where one account's secrets live in the keyring.
 pub struct Entry {
     pub server: String,
     pub email: String,
 }
 
+/// The two kinds of entry. They differ in `application`, not in an extra attribute: a
+/// lookup matches every entry that has the attributes asked for, so a session lookup
+/// must not be able to find the unlock key.
+#[derive(Clone, Copy)]
+enum Kind {
+    Session,
+    UnlockKey,
+}
+
 impl Entry {
-    fn tool(&self, verb: &str) -> Command {
+    fn tool(&self, verb: &str, kind: Kind) -> Command {
+        let (application, label) = match kind {
+            Kind::Session => ("nixe-passwords", "Nixe Passwords session"),
+            Kind::UnlockKey => ("nixe-passwords-unlock", "Nixe Passwords unlock key"),
+        };
         let mut c = Command::new("secret-tool");
         c.arg(verb);
         if verb == "store" {
-            c.arg("--label=Nixe Passwords session");
+            c.arg(format!("--label={label}"));
         }
-        c.args(["application", "nixe-passwords", "server", &self.server, "account", &self.email]);
+        c.args(["application", application, "server", &self.server, "account", &self.email]);
         c.stderr(Stdio::null());
         c
     }
 
+    /// Saves the refresh token.
     pub fn save(&self, token: &Secret) -> Result<(), KeyringError> {
+        self.store(token, Kind::Session)
+    }
+
+    /// The refresh token; `None` when there's none saved.
+    pub fn load(&self) -> Result<Option<Secret>, KeyringError> {
+        self.lookup(Kind::Session)
+    }
+
+    pub fn clear(&self) -> Result<(), KeyringError> {
+        self.remove(Kind::Session)
+    }
+
+    /// Saves the user key, for unlocking without the master password.
+    pub fn save_unlock_key(&self, key: &Secret) -> Result<(), KeyringError> {
+        self.store(key, Kind::UnlockKey)
+    }
+
+    pub fn load_unlock_key(&self) -> Result<Option<Secret>, KeyringError> {
+        self.lookup(Kind::UnlockKey)
+    }
+
+    pub fn clear_unlock_key(&self) -> Result<(), KeyringError> {
+        self.remove(Kind::UnlockKey)
+    }
+
+    fn store(&self, token: &Secret, kind: Kind) -> Result<(), KeyringError> {
         let mut child =
-            self.tool("store").stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(|_| KeyringError::Missing)?;
+            self.tool("store", kind).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(|_| KeyringError::Missing)?;
         let wrote = child.stdin.take().map(|mut input| input.write_all(token.expose().as_bytes()));
         let status = child.wait().map_err(|_| KeyringError::Refused)?;
         match (wrote, status.success()) {
@@ -58,10 +99,9 @@ impl Entry {
         }
     }
 
-    /// `None` when there's no saved token.
-    pub fn load(&self) -> Result<Option<Secret>, KeyringError> {
+    fn lookup(&self, kind: Kind) -> Result<Option<Secret>, KeyringError> {
         let mut child =
-            self.tool("lookup").stdin(Stdio::null()).stdout(Stdio::piped()).spawn().map_err(|_| KeyringError::Missing)?;
+            self.tool("lookup", kind).stdin(Stdio::null()).stdout(Stdio::piped()).spawn().map_err(|_| KeyringError::Missing)?;
         let mut out = Zeroizing::new(Vec::new());
         let read = child.stdout.take().map(|mut s| s.read_to_end(&mut out));
         let status = child.wait().map_err(|_| KeyringError::Refused)?;
@@ -77,8 +117,9 @@ impl Entry {
         Ok((!token.is_empty()).then(|| Secret::new(token)))
     }
 
-    pub fn clear(&self) -> Result<(), KeyringError> {
-        let status = self.tool("clear").stdin(Stdio::null()).stdout(Stdio::null()).status().map_err(|_| KeyringError::Missing)?;
+    fn remove(&self, kind: Kind) -> Result<(), KeyringError> {
+        let status =
+            self.tool("clear", kind).stdin(Stdio::null()).stdout(Stdio::null()).status().map_err(|_| KeyringError::Missing)?;
         if status.success() { Ok(()) } else { Err(KeyringError::Refused) }
     }
 }
