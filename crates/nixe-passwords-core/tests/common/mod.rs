@@ -22,8 +22,9 @@ pub fn fresh_email(tag: &str) -> String {
     format!("{tag}-{}@example.com", &uuid::Uuid::new_v4().simple().to_string()[..10])
 }
 
-/// Creates an account (test fixture: real clients do this in the web vault).
-pub async fn register(email: &str, password: &str, kdf: &Kdf) {
+/// Creates an account (test fixture: real clients do this in the web vault) and returns
+/// its public key.
+pub async fn register(email: &str, password: &str, kdf: &Kdf) -> String {
     let master = MasterKey::derive(password, email, kdf).unwrap();
     let hash = master.derive_master_key_hash(password.as_bytes(), HashPurpose::ServerAuthorization);
     let (user_key, protected) = master.make_user_key().unwrap();
@@ -53,6 +54,49 @@ pub async fn register(email: &str, password: &str, kdf: &Kdf) {
     body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
     let resp = http.post(format!("{}/identity/accounts/register/finish", server_url())).json(&body).send().await.unwrap();
     assert!(resp.status().is_success(), "register: {}", resp.status());
+    pair.public.to_string()
+}
+
+/// Creates an organization owned by the account and returns its id and the id of its
+/// one collection (test fixture: real clients do this in the web vault).
+#[allow(deprecated)] // the *_key_unsigned helper
+pub async fn create_org(access: &str, email: &str, public: &str) -> (String, String) {
+    use bitwarden_crypto::{
+        KeyEncryptable, PublicKey, SpkiPublicKeyBytes, SymmetricCryptoKey, SymmetricKeyAlgorithm, UnsignedSharedKey, UserKey,
+    };
+    let der = bitwarden_encoding::B64::try_from(public).unwrap();
+    let public = PublicKey::from_der(&SpkiPublicKeyBytes::from(der.as_bytes().to_vec())).unwrap();
+    let org_key = SymmetricCryptoKey::make(SymmetricKeyAlgorithm::Aes256CbcHmac);
+    let shared = UnsignedSharedKey::encapsulate_key_unsigned(&org_key, &public).unwrap();
+    let pair = UserKey::new(org_key.clone()).make_key_pair().unwrap();
+    let collection = "Shared".encrypt_with_key(&org_key).unwrap();
+    let http = http();
+    let org: Value = http
+        .post(format!("{}/api/organizations", server_url()))
+        .bearer_auth(access)
+        .json(&json!({
+            "name": "Test Org", "billingEmail": email, "collectionName": collection.to_string(),
+            "key": shared.to_string(), "planType": 0,
+            "keys": {"publicKey": pair.public.to_string(), "encryptedPrivateKey": pair.private},
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = org["id"].as_str().expect("organization created").to_string();
+    let cols: Value = http
+        .get(format!("{}/api/organizations/{id}/collections", server_url()))
+        .bearer_auth(access)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let col = cols["data"][0]["id"].as_str().unwrap().to_string();
+    (id, col)
 }
 
 /// Turns on authenticator two-step login and returns its base32 key.
@@ -126,6 +170,24 @@ impl Bw {
     pub fn item(&self, id: &str) -> Value {
         self.run(&["sync"]);
         serde_json::from_str(&self.run(&["get", "item", id])).unwrap()
+    }
+
+    pub fn create(&self, item: &Value) -> Value {
+        let encoded = bitwarden_encoding::B64::from(serde_json::to_vec(item).unwrap()).to_string();
+        serde_json::from_str(&self.run(&["create", "item", &encoded])).unwrap()
+    }
+
+    /// Attaches a file to an item.
+    pub fn attach(&self, id: &str, file: &std::path::Path) {
+        self.run(&["create", "attachment", "--itemid", id, "--file", file.to_str().unwrap()]);
+    }
+
+    /// The contents of an item's attachment, by file name.
+    pub fn attachment(&self, id: &str, name: &str) -> Vec<u8> {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join(name);
+        self.run(&["get", "attachment", name, "--itemid", id, "--output", out.to_str().unwrap()]);
+        std::fs::read(out).unwrap()
     }
 
     pub fn edit(&self, id: &str, item: &Value) {

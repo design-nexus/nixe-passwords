@@ -48,7 +48,8 @@ impl Session {
         let access = Secret::new(self.access(server, refresh).await?.expose());
         let body = {
             let mut key = self.keys.item(None, None)?;
-            let login = fill_login(&mut key, Login::default(), None, draft)?;
+            let has_password = draft.password.as_ref().is_some_and(|p| !p.is_empty());
+            let login = fill_login(&mut key, Login::default(), None, draft, has_password)?;
             json!({
                 "type": Kind::Login.number(),
                 "name": key.encrypt(draft.name.expose())?,
@@ -93,9 +94,10 @@ impl Session {
             new.folder_id = draft.folder;
             new.favorite = draft.favorite;
             new.reprompt = i64::from(draft.reprompt);
-            let login = fill_login(&mut key, old.login.clone().unwrap_or_default(), old.login.as_ref(), draft)?;
             let old_password = old.login.as_ref().and_then(|l| l.password.as_deref());
-            if password_changed(&mut key, old_password, draft.password.as_ref())? {
+            let changed = password_changed(&mut key, old_password, draft.password.as_ref())?;
+            let login = fill_login(&mut key, old.login.clone().unwrap_or_default(), old.login.as_ref(), draft, changed)?;
+            if changed {
                 push_history(&mut new, old_password);
             }
             new.login = Some(login);
@@ -153,8 +155,9 @@ fn encrypt_opt(key: &mut ItemKey, value: Option<&Secret>) -> Result<Option<Strin
 }
 
 /// The login part of a request. A web address that was already there keeps its match
-/// rule and other settings; each one carries the checksum official clients check.
-fn fill_login(key: &mut ItemKey, mut login: Login, old: Option<&Login>, draft: &LoginDraft) -> Result<Login> {
+/// rule and other settings; each one carries the checksum official clients check. The
+/// password's date moves only when the password itself changed.
+fn fill_login(key: &mut ItemKey, mut login: Login, old: Option<&Login>, draft: &LoginDraft, new_password: bool) -> Result<Login> {
     login.username = encrypt_opt(key, draft.username.as_ref())?;
     login.password = encrypt_opt(key, draft.password.as_ref())?;
     login.totp = encrypt_opt(key, draft.totp.as_ref())?;
@@ -174,7 +177,7 @@ fn fill_login(key: &mut ItemKey, mut login: Login, old: Option<&Login>, draft: &
         uris.push(entry);
     }
     login.uris = (!uris.is_empty()).then_some(uris);
-    if old.is_some_and(|o| o.password != login.password) || old.is_none() && login.password.is_some() {
+    if new_password {
         login.extra.insert("passwordRevisionDate".into(), Value::String(iso8601(now())));
     }
     Ok(login)

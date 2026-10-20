@@ -36,7 +36,8 @@
 - [x] app: settings card (vault, clipboard, generator, integrations, window, keyboard)
 - [x] app: checked at 1120 px and 800 px (debug snapshot mode, `PASSWORDS_SNAPSHOT`)
 - [x] install.sh, bin/nixe, uninstall.sh, Settings app list, icon, README, LICENSE
-- [ ] Compatibility check against `bw` and the web vault
+- [x] Compatibility check against `bw` (`tests/edit.rs`): logins made here read back in `bw`; editing items `bw` wrote keeps custom fields of every kind, match rules, passkeys, older password history, attachments, an item's own key and an organization item's collection. Fixed on the way: every save reset the password's date, even with the password unchanged
+- [ ] The same check by hand in the web vault (it shares `bw`'s client code)
 
 ## Phase 2 — Glimpse
 - [x] Glimpse native provider (`apps/glimpse/src/pw.rs`, parser in `src/passwords.rs`), prefix routing that keeps `pw` queries from every other provider, Enter / Ctrl+Enter / Alt+Enter / Ctrl+O / Ctrl+C, hints, locked / signed-out / unavailable / help rows
