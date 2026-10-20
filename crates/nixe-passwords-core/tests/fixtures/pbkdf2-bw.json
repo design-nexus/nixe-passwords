@@ -1,0 +1,174 @@
+[
+  {
+    "attachments": [],
+    "card": {
+      "brand": "Visa",
+      "cardholderName": "Octo Cat",
+      "code": "123",
+      "expMonth": "12",
+      "expYear": "2030",
+      "number": "4111111111111111"
+    },
+    "collectionIds": [],
+    "creationDate": "2026-10-19T01:52:13.530Z",
+    "favorite": false,
+    "fields": [
+      {
+        "name": "recovery",
+        "type": 1,
+        "value": "pbkdf2-field"
+      }
+    ],
+    "folderId": "2cb47bbc-c163-4832-b7be-ee5a7b5fa27d",
+    "id": "e8254dfc-b68c-4151-80b2-47025f5de57d",
+    "name": "Card pbkdf2",
+    "notes": "pbkdf2 notes for Card pbkdf2",
+    "object": "item",
+    "organizationId": null,
+    "passwordHistory": [],
+    "reprompt": 0,
+    "revisionDate": "2026-10-19T01:52:13.530Z",
+    "type": 3
+  },
+  {
+    "attachments": [],
+    "collectionIds": [],
+    "creationDate": "2026-10-19T01:52:07.967Z",
+    "favorite": false,
+    "fields": [
+      {
+        "name": "recovery",
+        "type": 1,
+        "value": "pbkdf2-field"
+      }
+    ],
+    "folderId": "2cb47bbc-c163-4832-b7be-ee5a7b5fa27d",
+    "id": "241db6d3-231b-487a-ab72-99aa73d1a420",
+    "login": {
+      "fido2Credentials": [],
+      "password": "canary-pbkdf2-Pw!9",
+      "passwordRevisionDate": null,
+      "totp": "otpauth://totp/GitHub:octo?secret=JBSWY3DPEHPK3PXP&issuer=GitHub",
+      "uris": [
+        {
+          "uri": "https://github.com/login"
+        }
+      ],
+      "username": "octo-pbkdf2"
+    },
+    "name": "GitHub pbkdf2",
+    "notes": "pbkdf2 notes for GitHub pbkdf2",
+    "object": "item",
+    "organizationId": null,
+    "passwordHistory": [],
+    "reprompt": 0,
+    "revisionDate": "2026-10-19T01:52:07.967Z",
+    "type": 1
+  },
+  {
+    "attachments": [],
+    "collectionIds": [
+      "70d817ac-a5cd-4313-9fd6-3be543b4def2"
+    ],
+    "creationDate": "2026-10-19T01:52:22.255Z",
+    "favorite": false,
+    "fields": [
+      {
+        "name": "recovery",
+        "type": 1,
+        "value": "pbkdf2-org-field"
+      }
+    ],
+    "folderId": null,
+    "id": "fca0f9ed-2dba-492d-9fad-903c66a20494",
+    "login": {
+      "fido2Credentials": [],
+      "password": "canary-pbkdf2-org-Pw!9",
+      "passwordRevisionDate": null,
+      "totp": "otpauth://totp/GitHub:octo?secret=JBSWY3DPEHPK3PXP&issuer=GitHub",
+      "uris": [
+        {
+          "uri": "https://github.com/login"
+        }
+      ],
+      "username": "octo-pbkdf2-org"
+    },
+    "name": "GitHub pbkdf2-org",
+    "notes": "pbkdf2-org notes for GitHub pbkdf2-org",
+    "object": "item",
+    "organizationId": "37e16ea5-00bd-4fc2-a566-a0b4a5e1a5f4",
+    "passwordHistory": [],
+    "reprompt": 0,
+    "revisionDate": "2026-10-19T01:52:22.256Z",
+    "type": 1
+  },
+  {
+    "attachments": [],
+    "collectionIds": [],
+    "creationDate": "2026-10-19T01:52:16.368Z",
+    "favorite": false,
+    "fields": [
+      {
+        "name": "recovery",
+        "type": 1,
+        "value": "pbkdf2-field"
+      }
+    ],
+    "folderId": "2cb47bbc-c163-4832-b7be-ee5a7b5fa27d",
+    "id": "62b4d7ec-b63b-4101-ba4d-dcd94633cc66",
+    "identity": {
+      "address1": null,
+      "address2": null,
+      "address3": null,
+      "city": null,
+      "company": null,
+      "country": null,
+      "email": "octo@example.com",
+      "firstName": "Octo",
+      "lastName": "Cat",
+      "licenseNumber": null,
+      "middleName": null,
+      "passportNumber": null,
+      "phone": null,
+      "postalCode": null,
+      "ssn": null,
+      "state": null,
+      "title": null,
+      "username": null
+    },
+    "name": "Identity pbkdf2",
+    "notes": "pbkdf2 notes for Identity pbkdf2",
+    "object": "item",
+    "organizationId": null,
+    "passwordHistory": [],
+    "reprompt": 0,
+    "revisionDate": "2026-10-19T01:52:16.368Z",
+    "type": 4
+  },
+  {
+    "attachments": [],
+    "collectionIds": [],
+    "creationDate": "2026-10-19T01:52:10.810Z",
+    "favorite": false,
+    "fields": [
+      {
+        "name": "recovery",
+        "type": 1,
+        "value": "pbkdf2-field"
+      }
+    ],
+    "folderId": "2cb47bbc-c163-4832-b7be-ee5a7b5fa27d",
+    "id": "b66fd5ff-6711-462c-9221-a77aa2158b75",
+    "name": "Note pbkdf2",
+    "notes": "pbkdf2 notes for Note pbkdf2",
+    "object": "item",
+    "organizationId": null,
+    "passwordHistory": [],
+    "reprompt": 0,
+    "revisionDate": "2026-10-19T01:52:10.811Z",
+    "secureNote": {
+      "type": 0
+    },
+    "type": 2
+  }
+]

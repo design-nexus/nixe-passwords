@@ -1,0 +1,23 @@
+/* Passwords uses the suite frame, option rows and semantic palette (STYLE.md). */
+window.passwords-window .list-toolbar { min-height: 46px; padding: 0 12px 0 14px; border-bottom: 1px solid @hairline; background: transparent; }
+.item-list { background: @theme_bg; }
+.item-list row { border-radius: 0; border-bottom: 1px solid @divider; background: transparent; }
+.item-list row:hover { background: @row_hover; }
+.item-list row:selected { background: @nav_active; }
+.item-list row.item-empty-row { border-bottom: none; background: transparent; }
+.item-row-name { font-weight: 500; }
+.item-row-description { font-size: 0.88em; }
+.item-detail-pane { border-left: 1px solid @hairline; }
+.item-details { padding: 12px 24px 36px; }
+.item-details > .group-title { margin-top: 14px; margin-bottom: 0; }
+.item-name { font-size: 1.2em; font-weight: 600; }
+.item-empty { color: @theme_dim_text; }
+.secret-value { font-variant-numeric: tabular-nums; }
+.secret-text { margin-top: 6px; }
+.account-card { padding: 24px; border: 1px solid @hairline; border-radius: 10px; margin: 24px 16px; }
+.account-title { font-size: 1.2em; font-weight: 600; }
+.account-field { color: @theme_dim_text; font-size: 0.88em; margin-top: 4px; }
+.account-error { color: @theme_danger; }
+.editor-frame { border: 1px solid @hairline; border-radius: 6px; padding: 6px 8px; }
+.editor-frame:focus-within { border-color: @theme_accent; }
+textview.editor-text, textview.editor-text text { background: transparent; color: @theme_text; }

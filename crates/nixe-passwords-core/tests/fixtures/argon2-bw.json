@@ -1,0 +1,174 @@
+[
+  {
+    "attachments": [],
+    "card": {
+      "brand": "Visa",
+      "cardholderName": "Octo Cat",
+      "code": "123",
+      "expMonth": "12",
+      "expYear": "2030",
+      "number": "4111111111111111"
+    },
+    "collectionIds": [],
+    "creationDate": "2026-10-19T01:52:54.442Z",
+    "favorite": false,
+    "fields": [
+      {
+        "name": "recovery",
+        "type": 1,
+        "value": "argon2-field"
+      }
+    ],
+    "folderId": "522b3216-c5ca-418b-b4e9-4a66ced34df7",
+    "id": "04a38a8a-75d4-42e9-9fd0-c4ff186ad59f",
+    "name": "Card argon2",
+    "notes": "argon2 notes for Card argon2",
+    "object": "item",
+    "organizationId": null,
+    "passwordHistory": [],
+    "reprompt": 0,
+    "revisionDate": "2026-10-19T01:52:54.443Z",
+    "type": 3
+  },
+  {
+    "attachments": [],
+    "collectionIds": [],
+    "creationDate": "2026-10-19T01:52:48.771Z",
+    "favorite": false,
+    "fields": [
+      {
+        "name": "recovery",
+        "type": 1,
+        "value": "argon2-field"
+      }
+    ],
+    "folderId": "522b3216-c5ca-418b-b4e9-4a66ced34df7",
+    "id": "743e12c9-fb76-4185-909e-adba44ac31a6",
+    "login": {
+      "fido2Credentials": [],
+      "password": "canary-argon2-Pw!9",
+      "passwordRevisionDate": null,
+      "totp": "otpauth://totp/GitHub:octo?secret=JBSWY3DPEHPK3PXP&issuer=GitHub",
+      "uris": [
+        {
+          "uri": "https://github.com/login"
+        }
+      ],
+      "username": "octo-argon2"
+    },
+    "name": "GitHub argon2",
+    "notes": "argon2 notes for GitHub argon2",
+    "object": "item",
+    "organizationId": null,
+    "passwordHistory": [],
+    "reprompt": 0,
+    "revisionDate": "2026-10-19T01:52:48.771Z",
+    "type": 1
+  },
+  {
+    "attachments": [],
+    "collectionIds": [
+      "5b36157d-b062-4e25-91db-4b58103e21a9"
+    ],
+    "creationDate": "2026-10-19T01:53:03.410Z",
+    "favorite": false,
+    "fields": [
+      {
+        "name": "recovery",
+        "type": 1,
+        "value": "argon2-org-field"
+      }
+    ],
+    "folderId": null,
+    "id": "2d1cf2cc-59dd-47cc-ba53-5be05377c3e0",
+    "login": {
+      "fido2Credentials": [],
+      "password": "canary-argon2-org-Pw!9",
+      "passwordRevisionDate": null,
+      "totp": "otpauth://totp/GitHub:octo?secret=JBSWY3DPEHPK3PXP&issuer=GitHub",
+      "uris": [
+        {
+          "uri": "https://github.com/login"
+        }
+      ],
+      "username": "octo-argon2-org"
+    },
+    "name": "GitHub argon2-org",
+    "notes": "argon2-org notes for GitHub argon2-org",
+    "object": "item",
+    "organizationId": "acf727fe-bab8-4628-a8de-cee608a96516",
+    "passwordHistory": [],
+    "reprompt": 0,
+    "revisionDate": "2026-10-19T01:53:03.411Z",
+    "type": 1
+  },
+  {
+    "attachments": [],
+    "collectionIds": [],
+    "creationDate": "2026-10-19T01:52:57.284Z",
+    "favorite": false,
+    "fields": [
+      {
+        "name": "recovery",
+        "type": 1,
+        "value": "argon2-field"
+      }
+    ],
+    "folderId": "522b3216-c5ca-418b-b4e9-4a66ced34df7",
+    "id": "0b04e085-444f-44e8-9c49-032d7183f3d1",
+    "identity": {
+      "address1": null,
+      "address2": null,
+      "address3": null,
+      "city": null,
+      "company": null,
+      "country": null,
+      "email": "octo@example.com",
+      "firstName": "Octo",
+      "lastName": "Cat",
+      "licenseNumber": null,
+      "middleName": null,
+      "passportNumber": null,
+      "phone": null,
+      "postalCode": null,
+      "ssn": null,
+      "state": null,
+      "title": null,
+      "username": null
+    },
+    "name": "Identity argon2",
+    "notes": "argon2 notes for Identity argon2",
+    "object": "item",
+    "organizationId": null,
+    "passwordHistory": [],
+    "reprompt": 0,
+    "revisionDate": "2026-10-19T01:52:57.284Z",
+    "type": 4
+  },
+  {
+    "attachments": [],
+    "collectionIds": [],
+    "creationDate": "2026-10-19T01:52:51.593Z",
+    "favorite": false,
+    "fields": [
+      {
+        "name": "recovery",
+        "type": 1,
+        "value": "argon2-field"
+      }
+    ],
+    "folderId": "522b3216-c5ca-418b-b4e9-4a66ced34df7",
+    "id": "80b1b2d7-050b-4587-93d6-a4d565dd2542",
+    "name": "Note argon2",
+    "notes": "argon2 notes for Note argon2",
+    "object": "item",
+    "organizationId": null,
+    "passwordHistory": [],
+    "reprompt": 0,
+    "revisionDate": "2026-10-19T01:52:51.593Z",
+    "secureNote": {
+      "type": 0
+    },
+    "type": 2
+  }
+]

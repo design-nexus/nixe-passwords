@@ -1,0 +1,17 @@
+{
+  "email": "spike-argon2-a0420f70@example.com",
+  "password": "correct horse argon2 battery",
+  "prelogin": {
+    "kdf": 1,
+    "kdfIterations": 3,
+    "kdfMemory": 64,
+    "kdfParallelism": 4,
+    "kdfSettings": {
+      "iterations": 3,
+      "kdfType": 1,
+      "memory": 64,
+      "parallelism": 4
+    },
+    "salt": null
+  }
+}

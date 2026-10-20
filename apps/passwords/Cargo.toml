@@ -1,0 +1,33 @@
+[package]
+name = "nixe-passwords"
+version = "0.1.0"
+description = "A password manager for Vaultwarden"
+default-run = "nixe-passwords"
+edition.workspace = true
+license = "GPL-3.0-only"
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+nixe-core = { path = "../../crates/nixe-core" }
+nixe-theme = { path = "../../crates/nixe-theme" }
+nixe-ui = { path = "../../crates/nixe-ui" }
+gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
+nixe-passwords-core = { path = "../../crates/nixe-passwords-core" }
+nixe-passwords-proto = { path = "../../crates/nixe-passwords-proto", features = ["client"] }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util"] }
+toml = "1"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+wl-clipboard-rs = "0.9"
+zeroize = "1"
+futures-util = "0.3"
+zbus = { version = "5", default-features = false, features = ["tokio", "p2p"] }
+
+[dev-dependencies]
+bitwarden-crypto = "=4.0.0"
+reqwest = { version = "0.13", features = ["json"] }
+tempfile = "3"

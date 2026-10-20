@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- music pdf
 #   curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- all
 #
-# Apps: settings contacts tasks torrents pdf notepad music media-player chat fonts archive office photos glimpse store git weather
+# Apps: settings contacts tasks torrents pdf notepad music media-player chat fonts archive office photos glimpse store git passwords weather
 # Options:
 #   --default  make the installed apps open their file types
 #   --gear     also add the Settings gear to the Omarchy bar (with settings)
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 REPO="design-nexus/nixe"
-ALL=(settings contacts tasks torrents pdf notepad music media-player chat fonts archive office photos glimpse store git weather)
+ALL=(settings contacts tasks torrents pdf notepad music media-player chat fonts archive office photos glimpse store git passwords weather)
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m==>\033[0m %s\n' "$*" >&2; }
@@ -28,6 +28,7 @@ app_info() {
     glimpse) ids="Glimpse" bins="nixe-glimpse nixe-glimpsed nixe-glimpse-settings" deps="bubblewrap" ;;
     contacts) ids="Contacts" defaults=true ;;
     git) ids="Git" deps="gtksourceview5 libsecret git-lfs" ;;
+    passwords) ids="Passwords" bins="nixe-passwords nixe-passwordsd nixe-passwords-settings" deps="libsecret" ;;
     store) ids="Store" bins="nixe-store nixe-store-helper" deps="pacman appstream libarchive polkit base-devel libjxl" ;;
     tasks) ids="Tasks" old_bins="tasks" ;;
     torrents) ids="Torrents" old_bins="torrents" deps="libtorrent-rasterbar boost" defaults=true ;;
@@ -215,6 +216,27 @@ for a in "${apps[@]}"; do
     sudo install -m 644 "$d/data/io.github.design_nexus.nixe.store.policy" /usr/share/polkit-1/actions/io.github.design_nexus.nixe.store.policy
     # The privileged entry point is never executed from a user-writable directory.
     rm -f "$bin/nixe-store-helper"
+  fi
+
+  if [[ $a == passwords ]]; then
+    # The vault service: started by the app (and Glimpse) when they need it.
+    mkdir -p "$config/systemd/user"
+    install -m 644 "$d/data/nixe-passwords.service" "$config/systemd/user/nixe-passwords.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+    # A running vault restarts on the new build, which locks it.
+    systemctl --user try-restart nixe-passwords.service 2>/dev/null || true
+    for host in nixe-settings settings; do
+      ext="$share/$host/extensions/passwords"
+      mkdir -p "$ext"
+      cat >"$ext/extension.toml" <<'MANIFEST'
+id = "passwords"
+name = "Passwords"
+category = "Accounts"
+version = "0.1.0"
+description = "Vault locking, clipboard clearing and Glimpse."
+exec = "nixe-passwords-settings"
+MANIFEST
+    done
   fi
 
   if [[ $a == glimpse ]]; then

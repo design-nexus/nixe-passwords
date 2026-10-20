@@ -1,0 +1,17 @@
+{
+  "email": "spike-pbkdf2-1d418bf5@example.com",
+  "password": "correct horse pbkdf2 battery",
+  "prelogin": {
+    "kdf": 0,
+    "kdfIterations": 600000,
+    "kdfMemory": null,
+    "kdfParallelism": null,
+    "kdfSettings": {
+      "iterations": 600000,
+      "kdfType": 0,
+      "memory": null,
+      "parallelism": null
+    },
+    "salt": null
+  }
+}

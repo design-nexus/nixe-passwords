@@ -5,7 +5,7 @@
 #   ./uninstall.sh all --purge        remove every app and its settings and data
 set -euo pipefail
 
-ALL=(settings contacts tasks torrents pdf notepad music media-player chat fonts archive office photos glimpse store git weather)
+ALL=(settings contacts tasks torrents pdf notepad music media-player chat fonts archive office photos glimpse store git passwords weather)
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 
@@ -41,6 +41,16 @@ for a in "${apps[@]}"; do
     systemctl --user daemon-reload 2>/dev/null || true
     rm -rf "$share/nixe-settings/extensions/glimpse" "$share/settings/extensions/glimpse"
     bins="nixe-glimpse nixe-glimpsed nixe-glimpse-settings"
+  fi
+  if [[ $a == passwords ]]; then
+    # Stopping the service locks the vault and clears a copy it left on the clipboard.
+    systemctl --user stop nixe-passwords.service 2>/dev/null || true
+    rm -f "$config/systemd/user/nixe-passwords.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+    rm -rf "$share/nixe-settings/extensions/passwords" "$share/settings/extensions/passwords"
+    bins="nixe-passwords nixe-passwordsd nixe-passwords-settings"
+    # The session token in the desktop keyring; the vault itself stays on the server.
+    [[ $purge == true ]] && command -v secret-tool >/dev/null && secret-tool clear application nixe-passwords 2>/dev/null || true
   fi
   if [[ $a == store ]]; then
     sudo rm -f /usr/local/lib/nixe-store/nixe-store-helper /usr/share/polkit-1/actions/io.github.design_nexus.nixe.store.policy

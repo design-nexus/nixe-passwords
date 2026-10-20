@@ -1,0 +1,32 @@
+//! Nixe Passwords: the window. The vault itself lives in `nixe-passwordsd`.
+
+mod app;
+
+use gtk::{gio, glib, prelude::*};
+
+fn main() -> glib::ExitCode {
+    nixe_core::app::init(nixe_passwords::daemon::APP);
+    let args: Vec<_> = std::env::args().collect();
+    if args.iter().any(|s| s == "--help" || s == "-h") {
+        println!("Usage: nixe-passwords [--unlock] [--section all|favorites|login|note|card|identity|trash|settings]");
+        return glib::ExitCode::SUCCESS;
+    }
+    if std::env::var_os("GSK_RENDERER").is_none() {
+        // SAFETY: set before any thread starts.
+        unsafe { std::env::set_var("GSK_RENDERER", "ngl") };
+    }
+    let app = gtk::Application::builder()
+        .application_id("io.github.design_nexus.nixe.Passwords")
+        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
+        .build();
+    app.connect_command_line(|app, cl| {
+        let argv: Vec<String> = cl.arguments().iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        let section = argv.iter().position(|s| s == "--section").and_then(|i| argv.get(i + 1)).cloned();
+        // --unlock (from Glimpse) just brings the window up: it opens on the unlock page
+        // while the vault is locked.
+        app::ui::present(app, section.as_deref());
+        glib::ExitCode::SUCCESS
+    });
+    app.connect_shutdown(|_| app::prefs::flush());
+    app.run()
+}
