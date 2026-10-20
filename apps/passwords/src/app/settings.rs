@@ -5,6 +5,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gtk::{glib, prelude::*};
+use nixe_passwords_proto::Error as Code;
 use nixe_ui::widgets as w;
 
 use super::client;
@@ -80,10 +81,15 @@ fn keyring_row(ui: &Ui) -> gtk::Box {
                     ui::toast(&ui, if on { "The keyring can unlock the vault now." } else { "The key is gone from the keyring." })
                 }
                 Err(e) => {
-                    ui::toast(&ui, &e.to_string());
                     quiet.set(true);
                     s.set_active(!on);
                     quiet.set(false);
+                    if e.is(Code::Reprompt) {
+                        // Turning it on needs the master password: ask, then try again.
+                        super::account::confirm(&ui, move || s.set_active(true));
+                    } else {
+                        ui::toast(&ui, &e.to_string());
+                    }
                 }
             }
         });

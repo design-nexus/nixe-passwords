@@ -130,6 +130,8 @@ fn ask_and_check(ui: &Ui, button: &gtk::Button) {
         let reply = client::text("CheckBreaches", None).await;
         button.set_sensitive(true);
         match reply.map(|json| serde_json::from_str::<Vec<Exposed>>(&json).unwrap_or_default()) {
+            // Locked while it ran: nothing of the vault goes back into the window.
+            Ok(_) if *ui.state.borrow() != nixe_passwords_proto::state::UNLOCKED => {}
             Ok(found) => {
                 let n = found.len();
                 ui.security.borrow_mut().breaches = Some(found.into_iter().map(|e| (e.id, e.count)).collect());

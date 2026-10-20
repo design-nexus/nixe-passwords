@@ -15,7 +15,6 @@ can't meet a rule, the change waits; the rule doesn't bend.
 | Access token | Daemon memory |
 | Refresh token | Secret Service |
 | User key | Secret Service, only while "Unlock with the keyring" is on (off by default). Then anyone who can use the logged-in session, including programs running as the user, can open the vault; the setting says so |
-| User key | Secret Service, only while "Unlock with the keyring" is on (off by default). Then anyone who can use the logged-in session, including programs running as the user, can open the vault; the setting says so |
 | Encrypted snapshot | `vault.sqlite` (0600), the same ciphertext the server keeps |
 
 Metadata counts as sensitive. It isn't a secret like a password, but it is never
@@ -103,10 +102,13 @@ dropped on lock.
 
 ## Rules for code
 
-1. **No custom cryptography.** Every KDF, cipher, MAC and key-wrap call goes through
-   `nixe-passwords-core/src/crypto.rs`, and that module only calls bitwarden-crypto
-   (and, for native messaging, RustCrypto's `x25519-dalek`, `hkdf` and `aes-gcm`).
-   No other module names a primitive.
+1. **No custom cryptography.** Every KDF, cipher, MAC, hash and key-wrap call goes
+   through `nixe-passwords-core/src/crypto.rs`, and that module only calls
+   bitwarden-crypto (and, for native messaging, RustCrypto's `x25519-dalek`, `hkdf` and
+   `aes-gcm`; for the security report, `sha2` and `sha1`). No other module names a
+   primitive. The one exception is `ssh.rs`, which uses RustCrypto's `ssh-key` for SSH
+   key items: generating Ed25519 keys and reading OpenSSH files, nothing the vault's
+   own encryption depends on.
 2. **No plaintext on disk.** No decrypted field in SQLite, settings, caches, temp files
    or the plugin storage of any app. A test plants a canary password, runs a sync,
    copy, edit and lock, then scans every file under the app's directories for it.
@@ -162,6 +164,11 @@ Copies are served by the daemon through the Wayland data-control protocol
   Unicode, MPL-2.0, GPL-3.0-only.
 - The browser extension has no runtime npm dependencies. Build tooling is pinned by
   lockfile.
+
+## Reviews
+
+Each review checks the code against this file rule by rule and records what it found
+and changed in [REVIEW.md](REVIEW.md).
 
 ## Reporting
 

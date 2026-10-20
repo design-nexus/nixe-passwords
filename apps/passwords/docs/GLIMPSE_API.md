@@ -23,7 +23,7 @@ is disconnected before any method runs.
 | --- | --- |
 | `~/.local/bin/nixe-passwords` | `app`: everything below plus `Reveal`, edits, login, unlock, settings |
 | `~/.local/bin/nixe-glimpse` | `glimpse`: `Status`, `Search`, `Suggest`, `Copy`, `OpenUrl`, `Generate`, `Lock` |
-| `~/.local/bin/nixe-passwords-settings` | `settings`: `Status`, `Lock`, `Sync`, pairing list and revoke |
+| `~/.local/bin/nixe-passwords-settings` | `settings`: `Status`, `Lock`, `Sync` |
 | `~/.local/bin/nixe-passwords-bridge` | `browser`: per-origin calls in [NATIVE_MESSAGING.md](NATIVE_MESSAGING.md) |
 | `~/.local/bin/nixe-passwords-assistant` | `assistant`: `Status`, `Search`, `Copy` (username, password, code). Off until `assistant = true` |
 
@@ -81,9 +81,6 @@ Item ids are not secret, but the list reveals usage, so it isn't written to disk
 | `SignIn` | `(s server, s email, s password, y method, s code) → (b done, a(ys) methods)` | `method` 255: no two-step answer. Not done: ask for one of `methods` (number, masked hint) and call again |
 | `SendEmailCode` | `(s server, s email, s password) → ()` | For two-step login by email |
 | `Unlock` | `(s password) → ()` | From the local copy; a sync follows in the background |
-| `UnlockWithKeyring` | `() → ()` | With the user key saved in the desktop keyring; a stale key is removed and refused |
-| `KeyringUnlock` | `() → b` | Whether a key for unlocking is saved in the keyring |
-| `SetKeyringUnlock` | `(b on) → ()` | On: saves the user key there (the vault must be unlocked). Off: removes it. Signing out and a key change elsewhere remove it too |
 | `UnlockWithKeyring` | `() → ()` | With the user key saved in the desktop keyring; a stale key is removed and refused |
 | `KeyringUnlock` | `() → b` | Whether a key for unlocking is saved in the keyring |
 | `SetKeyringUnlock` | `(b on) → ()` | On: saves the user key there (the vault must be unlocked). Off: removes it. Signing out and a key change elsewhere remove it too |

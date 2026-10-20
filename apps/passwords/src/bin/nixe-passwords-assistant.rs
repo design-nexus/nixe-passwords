@@ -10,7 +10,7 @@
 //! settings, and the assistant asks for a key press before each call
 //! (`assistant-policy`'s `Secrets` capability).
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -28,11 +28,16 @@ fn main() {
     };
     let mut conn: Option<zbus::Connection> = None;
     let mut out = std::io::stdout().lock();
-    for line in std::io::stdin().lock().lines() {
-        let Ok(line) = line else { break };
-        if line.len() > MAX_LINE {
-            break;
+    let mut input = std::io::stdin().lock();
+    loop {
+        // Read at most one frame's worth, so an over-long line can't grow without end.
+        let mut raw = Vec::new();
+        match (&mut input).take(MAX_LINE as u64 + 1).read_until(b'\n', &mut raw) {
+            Ok(0) | Err(_) => break,
+            Ok(_) if raw.len() > MAX_LINE => break,
+            Ok(_) => {}
         }
+        let Ok(line) = String::from_utf8(raw) else { continue };
         let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
         // Notifications (initialized, cancelled) need no answer; calls finish quickly.
         let Some(id) = message.get("id").cloned() else { continue };

@@ -2,7 +2,7 @@
 //! delete one. The window opens the file and hands it to the daemon, which decrypts into
 //! it (or encrypts from it); the contents never pass through here.
 
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use gtk::{gio, glib, prelude::*};
 use nixe_ui::widgets as w;
@@ -76,6 +76,8 @@ fn parent(widget: &impl IsA<gtk::Widget>) -> Option<gtk::Window> {
 
 fn save_as(ui: &Ui, button: &gtk::Button, id: &str, attachment: &str, name: &str) {
     let (ui, id, attachment) = (ui.clone(), id.to_string(), attachment.to_string());
+    // The name comes from the vault, which others may write: only its last part is used.
+    let name = name.rsplit(['/', '\\']).next().filter(|n| !n.is_empty() && *n != "." && *n != "..").unwrap_or("attachment");
     let dialog = gtk::FileDialog::builder().title("Save attachment").initial_name(name).modal(true).build();
     dialog.save(parent(button).as_ref(), gio::Cancellable::NONE, move |picked| {
         let Some(path) = picked.ok().and_then(|f| f.path()) else { return };
@@ -87,6 +89,8 @@ fn save_as(ui: &Ui, button: &gtk::Button, id: &str, attachment: &str, name: &str
 /// leave a partial file behind.
 fn save_to(ui: &Ui, id: &str, attachment: &str, path: std::path::PathBuf) {
     let file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path);
+    // A file that already existed keeps its permissions on open: make it yours alone too.
+    let file = file.and_then(|f| f.set_permissions(std::fs::Permissions::from_mode(0o600)).map(|()| f));
     let file = match file {
         Ok(f) => f,
         Err(e) => return ui::toast(ui, &format!("The file couldn't be created: {e}")),

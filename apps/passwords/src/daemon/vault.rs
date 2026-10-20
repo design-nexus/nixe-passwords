@@ -31,6 +31,10 @@ use super::settings::{Settings, Watched};
 const RECENT: usize = 20;
 const SEARCH_MAX: u32 = 50;
 const QUERY_MAX: usize = 256;
+/// The largest item draft (JSON) the app may send.
+const DRAFT_MAX: usize = 256 * 1024;
+/// The largest private key text `ReadSshKey` takes.
+const SSH_KEY_MAX: usize = 64 * 1024;
 /// Copies Glimpse may ask for in a minute; reveals the app may ask for.
 const GLIMPSE_COPIES_PER_MINUTE: usize = 10;
 const APP_REVEALS_PER_MINUTE: usize = 60;
@@ -430,10 +434,16 @@ impl Vault {
     }
 
     /// Turns unlocking with the keyring on (saving the user key there; the vault must be
-    /// unlocked) or off (removing it).
+    /// unlocked, and the master password confirmed just before, as for re-prompting
+    /// items) or off (removing it).
     pub async fn set_keyring_unlock(&self, scope: Scope, on: bool) -> Result<()> {
         need(scope, Scope::App)?;
         let st = self.state.lock().await;
+        // Otherwise anything that can act as the app while the vault is open could keep
+        // a way in after it locks.
+        if on && !st.confirmed.is_some_and(|t| t.elapsed() < REPROMPT_GRACE) {
+            return Err(Failure::new(Code::Reprompt, "confirm the master password first"));
+        }
         let entry = unlock_entry(&st).ok_or_else(|| Failure::new(Code::LoggedOut, "not signed in"))?;
         let saved = if on {
             let key = st.session.as_ref().ok_or_else(locked)?.keys.export_user_key().map_err(SessionError::from)?;
@@ -592,6 +602,9 @@ impl Vault {
     /// `{public, fingerprint}`.
     pub fn read_ssh_key(&self, scope: Scope, private: &str) -> Result<String> {
         need(scope, Scope::App)?;
+        if private.len() > SSH_KEY_MAX {
+            return Err(Failure::new(Code::Failed, "that file is too large to be a private key"));
+        }
         let key = nixe_passwords_core::ssh::read(private).map_err(|e| Failure::new(Code::Failed, e.to_string()))?;
         Ok(json!({"public": key.public, "fingerprint": key.fingerprint}).to_string())
     }
@@ -919,7 +932,12 @@ pub(super) fn parse_id(id: &str) -> Result<Uuid> {
     Uuid::parse_str(id).map_err(|_| Failure::new(Code::NotFound, "no such item"))
 }
 
+fn too_large(text: &str) -> Result<()> {
+    if text.len() > DRAFT_MAX { Err(Failure::new(Code::Failed, "the item is too large")) } else { Ok(()) }
+}
+
 fn parse_draft(text: &str) -> Result<LoginDraft> {
+    too_large(text)?;
     #[derive(Deserialize)]
     struct Draft {
         name: String,
@@ -966,6 +984,7 @@ fn parse_draft(text: &str) -> Result<LoginDraft> {
 /// A note, card, identity or SSH key draft: `{kind, name, fields: {"card.number": …},
 /// notes, folder, favorite, reprompt}`. Field names must belong to the kind.
 fn parse_item_draft(text: &str) -> Result<ItemDraft> {
+    too_large(text)?;
     #[derive(Deserialize)]
     struct Draft {
         kind: String,

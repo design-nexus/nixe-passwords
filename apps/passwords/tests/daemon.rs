@@ -726,6 +726,8 @@ async fn keyring_unlock() {
             ["CreateLogin", draft],
             ["KeyringUnlock"],
             ["SetKeyringUnlock", true],
+            ["VerifyPassword", password],
+            ["SetKeyringUnlock", true],
             ["KeyringUnlock"],
             ["Lock"],
             ["Search", "git", 5],
@@ -736,12 +738,15 @@ async fn keyring_unlock() {
     );
     assert_eq!(ok(&app[0])[0], true, "{:?}", app[0]);
     assert_eq!(ok(&app[2]), false);
-    ok(&app[3]);
-    assert_eq!(ok(&app[4]), true);
-    assert_eq!(err(&app[6]), "Locked");
-    ok(&app[7]);
-    assert_eq!(ok(&app[8]).as_array().unwrap().len(), 1);
-    assert_eq!(ok(&app[9])[0], "unlocked");
+    // Turning it on needs the master password confirmed just before.
+    assert_eq!(err(&app[3]), "Reprompt");
+    ok(&app[4]);
+    ok(&app[5]);
+    assert_eq!(ok(&app[6]), true);
+    assert_eq!(err(&app[8]), "Locked");
+    ok(&app[9]);
+    assert_eq!(ok(&app[10]).as_array().unwrap().len(), 1);
+    assert_eq!(ok(&app[11])[0], "unlocked");
     // Glimpse can't unlock or turn it on.
     let g = s.as_peer("nixe-glimpse", json!([["UnlockWithKeyring"], ["SetKeyringUnlock", true]]));
     assert_eq!((err(&g[0]), err(&g[1])), ("Denied", "Denied"));

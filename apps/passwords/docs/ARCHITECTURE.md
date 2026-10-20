@@ -135,12 +135,6 @@ it) and can then open the local copy with it. The key is checked against the acc
 private key; one that no longer fits is removed. Signing out removes it. Fingerprint
 unlock waits for hardware to test it on: it would gate this same key behind fprintd.
 
-**Unlock with the keyring** (opt-in): the daemon saves the user key in Secret Service
-(`application=nixe-passwords-unlock`, so a lookup for the session token can't find
-it) and can then open the local copy with it. The key is checked against the account's
-private key; one that no longer fits is removed. Signing out removes it. Fingerprint
-unlock waits for hardware to test it on: it would gate this same key behind fprintd.
-
 **Attachments:** each file has its own key, wrapped by the item's key, as the official
 clients do. Adding one encrypts it (at most 100 MB, held in memory meanwhile), announces
 it (`POST /api/ciphers/{id}/attachment/v2`) and uploads it to the server

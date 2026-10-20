@@ -6,16 +6,17 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sha1::{Digest, Sha1};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::crypto::Keys;
+use crate::crypto::{Keys, breach_hash, password_digest};
 use crate::model::{Cipher, Kind, Sync};
 use crate::secret::Secret;
 
 /// Have I Been Pwned's password range API.
 pub const BREACH_API: &str = "https://api.pwnedpasswords.com";
+/// The largest range answer read.
+const RANGE_MAX: usize = 1 << 20;
 /// A password unchanged for longer than this is reported as old.
 pub const OLD_DAYS: u64 = 365;
 /// zxcvbn scores below this (0 to 4) are weak, as in the official clients.
@@ -52,7 +53,7 @@ pub fn audit(keys: &Keys, sync: &Sync, now: SystemTime, cache: &mut StrengthCach
     let mut by_password: HashMap<[u8; 32], usize> = HashMap::new();
     let mut rows = Vec::new();
     for (c, password) in audited(keys, sync) {
-        let digest: [u8; 32] = sha2::Sha256::digest(password.expose().as_bytes()).into();
+        let digest = password_digest(&password);
         *by_password.entry(digest).or_default() += 1;
         let weak = match cache.get(&c.id) {
             Some((revision, weak)) if *revision == c.revision_date => *weak,
@@ -101,12 +102,7 @@ fn days_since_epoch(date: &str) -> Option<u64> {
 /// Each audited login's password as an upper-case SHA-1 hex digest, for the breach
 /// check. Worked out under the vault lock; the lookups happen after it's released.
 pub fn breach_hashes(keys: &Keys, sync: &Sync) -> Vec<(Uuid, Zeroizing<String>)> {
-    audited(keys, sync)
-        .map(|(c, password)| {
-            let digest = Sha1::digest(password.expose().as_bytes());
-            (c.id, Zeroizing::new(digest.iter().map(|b| format!("{b:02X}")).collect()))
-        })
-        .collect()
+    audited(keys, sync).map(|(c, password)| (c.id, breach_hash(&password))).collect()
 }
 
 /// How often each password appears in Have I Been Pwned's breach data (`base` is
@@ -122,14 +118,22 @@ pub async fn breaches(base: &str, hashes: &[(Uuid, Zeroizing<String>)]) -> Resul
     }
     let mut found = Vec::new();
     for (prefix, wanted) in by_prefix {
-        let body = http
-            .get(format!("{base}/range/{prefix}"))
-            .header("Add-Padding", "true")
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+        let mut resp =
+            http.get(format!("{base}/range/{prefix}")).header("Add-Padding", "true").send().await?.error_for_status()?;
+        // A padded answer is around 30 KB; one far larger isn't an answer, and is skipped.
+        let mut raw = Vec::new();
+        let mut too_large = false;
+        while let Some(chunk) = resp.chunk().await? {
+            if raw.len() + chunk.len() > RANGE_MAX {
+                too_large = true;
+                break;
+            }
+            raw.extend_from_slice(&chunk);
+        }
+        if too_large {
+            continue;
+        }
+        let body = String::from_utf8_lossy(&raw);
         let counts: HashMap<&str, u64> = body
             .lines()
             .filter_map(|line| line.trim().split_once(':'))

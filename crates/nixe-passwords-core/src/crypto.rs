@@ -161,6 +161,18 @@ pub fn uri_checksum(uri: &str) -> Secret {
     Secret::new(bitwarden_encoding::B64::from(sha2::Sha256::digest(uri.as_bytes()).to_vec()).to_string())
 }
 
+/// A password's SHA-256, for telling reused passwords apart in the security report.
+pub fn password_digest(password: &Secret) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(password.expose().as_bytes()).into()
+}
+
+/// A password's SHA-1 as upper-case hex: the format of Have I Been Pwned's range API.
+pub fn breach_hash(password: &Secret) -> Zeroizing<String> {
+    use sha1::Digest;
+    Zeroizing::new(sha1::Sha1::digest(password.expose().as_bytes()).iter().map(|b| format!("{b:02X}")).collect())
+}
+
 /// Checks that a value parses as an EncString without decrypting it.
 pub fn is_enc_string(value: &str) -> bool {
     bw::EncString::parse_strict(value).is_ok()
