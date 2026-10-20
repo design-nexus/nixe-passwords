@@ -17,13 +17,15 @@ the vault syncs. Two-step login works with an authenticator app or an emailed co
 - Lists logins, secure notes, cards, identities and SSH keys by type, folder and
   collection, with favorites, search and a trash with Undo.
 - Shows a login's username, password (hidden until shown, hidden again after 30 s),
-  current one-time code and web addresses.
-- Creates and edits logins, with a password and passphrase generator. An edit made
-  in another app in the meantime is caught instead of overwritten.
+  current one-time code and web addresses, and every field of cards, identities, SSH
+  keys and custom fields, with secret ones hidden until shown.
+- Creates and edits logins, secure notes, cards and identities, with a password and
+  passphrase generator. An edit made in another app in the meantime is caught instead
+  of overwritten.
 - Honors "ask for master password" on items.
 - Works offline from the local copy; edits need the server.
 
-Cards, identities and SSH keys can be viewed (name, notes) but not yet edited here.
+SSH keys and custom fields can be viewed and copied but not yet edited here.
 
 ## How it keeps the vault
 
@@ -45,7 +47,7 @@ Settings live in `~/.config/nixe-passwords/settings.toml`. Details:
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+N | New login |
+| Ctrl+N | New item |
 | Ctrl+F | Search the vault |
 | Ctrl+Shift+U / C / O | Copy the username / password / one-time code |
 | Ctrl+S | Save in the editor |

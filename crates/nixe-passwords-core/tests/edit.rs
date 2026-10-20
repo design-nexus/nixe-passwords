@@ -10,7 +10,8 @@ mod common;
 use std::num::NonZeroU32;
 
 use nixe_passwords_core::api::{ApiError, Server};
-use nixe_passwords_core::edit::LoginDraft;
+use nixe_passwords_core::edit::{ItemDraft, LoginDraft};
+use nixe_passwords_core::model::Kind;
 use nixe_passwords_core::secret::Secret;
 use nixe_passwords_core::session::{self, Session, SessionError, SignIn};
 use nixe_passwords_core::store::Store;
@@ -238,4 +239,109 @@ async fn edits_keep_what_other_clients_wrote() {
     }
     assert_eq!(s.snapshot.ciphers.iter().find(|c| c.id == own).unwrap().key.as_deref(), Some(wrapped.as_str()));
     assert_eq!(bw.attachment(&rich.to_string(), "recovery-codes.txt"), b"canary attachment contents\n");
+}
+
+fn item_draft(kind: Kind, name: &str, fields: &[(&str, &str)]) -> ItemDraft {
+    ItemDraft {
+        kind,
+        name: Secret::new(name),
+        fields: fields.iter().map(|(n, v)| (n.to_string(), Secret::new(*v))).collect(),
+        notes: Some(Secret::new(format!("{name} notes"))),
+        folder: None,
+        favorite: false,
+        reprompt: false,
+    }
+}
+
+/// Notes, cards and identities made here read back in `bw` field by field; editing one
+/// `bw` made changes only what was edited.
+#[tokio::test]
+#[ignore = "needs NIXE_PW_TEST_SERVER"]
+async fn notes_cards_and_identities_round_trip_with_bw() {
+    let email = common::fresh_email("items");
+    let password = "correct horse items battery";
+    common::register(&email, password, &bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() }).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+    let SignIn::Done(mut s) =
+        session::sign_in(&mut store, &server, &email, &Secret::new(password), "nixe test", None).await.unwrap()
+    else {
+        panic!("two-step login")
+    };
+    let refresh = Secret::new(s.refresh_token().unwrap().expose());
+    let bw = common::Bw::login(&email, password);
+
+    let card = [
+        ("card.cardholderName", "Octo Cat"),
+        ("card.brand", "Visa"),
+        ("card.number", "4111111111111111"),
+        ("card.expMonth", "12"),
+        ("card.expYear", "2030"),
+        ("card.code", "123"),
+    ];
+    let identity = [
+        ("identity.title", "Dr"),
+        ("identity.firstName", "Octo"),
+        ("identity.lastName", "Cat"),
+        ("identity.email", "octo@example.com"),
+        ("identity.city", "Springfield"),
+        ("identity.ssn", "078-05-1120"),
+    ];
+    for (draft, section) in [
+        (item_draft(Kind::Note, "Note here", &[]), "secureNote"),
+        (item_draft(Kind::Card, "Card here", &card), "card"),
+        (item_draft(Kind::Identity, "Identity here", &identity), "identity"),
+    ] {
+        let id = s.create_item(&mut store, &server, &refresh, &draft).await.unwrap();
+        let item = bw.item(&id.to_string());
+        assert_eq!(item["name"], draft.name.expose());
+        assert_eq!(item["notes"], format!("{} notes", draft.name.expose()));
+        assert_eq!(item["type"], draft.kind.number());
+        for (name, value) in &draft.fields {
+            let key = name.split_once('.').unwrap().1;
+            assert_eq!(item[section][key], value.expose(), "{name}");
+        }
+        if draft.kind == Kind::Note {
+            assert_eq!(item["secureNote"]["type"], 0);
+        }
+    }
+
+    // A card bw made, with a custom field and an attachment: a new expiry year changes
+    // only that, and clearing the code clears only that.
+    let made = bw.create(&json!({
+        "type": 3, "name": "Card from bw", "notes": null, "favorite": true, "reprompt": 0, "folderId": null,
+        "fields": [{"name": "pin", "value": "4321", "type": 1}],
+        "card": {"cardholderName": "Octo Cat", "brand": "Mastercard", "number": "5555555555554444",
+                 "expMonth": "3", "expYear": "2027", "code": "456"},
+    }));
+    let id: Uuid = made["id"].as_str().unwrap().parse().unwrap();
+    let file = dir.path().join("card-terms.txt");
+    std::fs::write(&file, "canary card attachment\n").unwrap();
+    bw.attach(&id.to_string(), &file);
+    s.sync(&mut store, &server, &refresh).await.unwrap();
+    let before = bw.item(&id.to_string());
+    let mut fields: Vec<(&str, &str)> =
+        nixe_passwords_core::vault::CARD.iter().map(|spec| (spec.name, before["card"][spec.key].as_str().unwrap())).collect();
+    for f in &mut fields {
+        match f.0 {
+            "card.expYear" => f.1 = "2031",
+            "card.code" => f.1 = "",
+            _ => {}
+        }
+    }
+    let mut draft = item_draft(Kind::Card, "Card from bw", &fields);
+    draft.notes = None;
+    draft.favorite = true;
+    s.update_item(&mut store, &server, &refresh, id, &draft).await.unwrap();
+    let after = bw.item(&id.to_string());
+    let mut expected = before.clone();
+    expected["card"]["expYear"] = "2031".into();
+    expected["card"]["code"] = Value::Null;
+    assert_eq!(settled(after), settled(expected));
+    assert_eq!(bw.attachment(&id.to_string(), "card-terms.txt"), b"canary card attachment\n");
+
+    // A card isn't saved as an identity.
+    let wrong = item_draft(Kind::Identity, "Card from bw", &[]);
+    assert!(s.update_item(&mut store, &server, &refresh, id, &wrong).await.is_err());
 }

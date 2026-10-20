@@ -171,6 +171,15 @@ impl Service {
         Ok(self.vault.update_login(self.scope, &id, &draft).await?)
     }
 
+    /// Creates a note, card or identity from a JSON draft; returns its id.
+    async fn create_item(&self, draft: String) -> Result<String, Error> {
+        Ok(self.vault.create_item(self.scope, &draft).await?)
+    }
+
+    async fn update_item(&self, id: String, draft: String) -> Result<(), Error> {
+        Ok(self.vault.update_item(self.scope, &id, &draft).await?)
+    }
+
     async fn trash(&self, id: String) -> Result<(), Error> {
         Ok(self.vault.trash(self.scope, &id, false).await?)
     }

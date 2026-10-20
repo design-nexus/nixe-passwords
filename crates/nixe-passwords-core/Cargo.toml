@@ -8,6 +8,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+nixe-passwords-proto = { path = "../nixe-passwords-proto" }
 aes-gcm = "0.11"
 bitwarden-crypto = "=4.0.0"
 bitwarden-encoding = "=4.0.0"

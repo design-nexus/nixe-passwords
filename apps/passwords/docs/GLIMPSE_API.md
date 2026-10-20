@@ -43,7 +43,7 @@ All strings are UTF-8. An `Item` is `(s id, s name, s username, s host, b has_to
 | `Status` | `() → (s state, s server_host, u clear_seconds)` | `state`: `logged_out`, `locked` or `unlocked` |
 | `Search` | `(s query, u limit) → a(ssssbs)` | Case-insensitive terms over name, username, host, folder and collection; prefix matches on name and host rank first; at most 50 |
 | `Suggest` | `(u limit) → (s origin_host, a(ssssbs))` | Items for the trusted active site, else recently used; `origin_host` is `""` when there is no trusted context |
-| `Copy` | `(s id, s field) → (u clear_seconds)` | `field`: `username`, `password` or `totp`. The daemon puts the value on the clipboard; nothing comes back but the timeout |
+| `Copy` | `(s id, s field) → (u clear_seconds)` | `field`: `username`, `password` or `totp`; the app may also copy any field `Reveal` takes. The daemon puts the value on the clipboard; nothing comes back but the timeout |
 | `OpenUrl` | `(s id) → s url` | The item's first `http(s)` URI with any user-info removed; `NoUrl` if none |
 | `Generate` | `() → (u clear_seconds)` | Generates with the saved generator settings and copies the result |
 | `Lock` | `() → ()` | |
@@ -84,10 +84,13 @@ Item ids are not secret, but the list reveals usage, so it isn't written to disk
 | `SignOut` | `() → ()` | Removes the account, the local copy and the saved token |
 | `Sync` | `() → ()` | Also allowed for the Settings page |
 | `List` | `() → s` | JSON: account, entries (metadata), folders, collections, organizations |
-| `Reveal` | `(s id, s field) → s` | `username`, `password`, `totp` (the code), `totp_seed`, `notes`, `custom:N` |
+| `Reveal` | `(s id, s field) → s` | `username`, `password`, `totp` (the code), `totp_seed`, `notes`, `custom:N`, or a card, identity or SSH key field (`card.number`, …; the list is `nixe_passwords_proto::fields`) |
+| `Fields` | `(s id) → s` | JSON `[{name, label, value, secret}]`: a card's, identity's or SSH key's fields and the custom fields; secret values are left out |
 | `GeneratePassword` | `(s rules) → s` | `{"kind":"password",…}` or `{"kind":"passphrase",…}` |
 | `CreateLogin` | `(s draft) → s id` | Draft JSON: name, username, password, totp, uris, notes, folder, favorite, reprompt |
 | `UpdateLogin` | `(s id, s draft) → ()` | |
+| `CreateItem` | `(s draft) → s id` | A note, card or identity. Draft JSON: kind (`note`, `card`, `identity`), name, fields (`{"card.number": …}`; one left out is cleared), notes, folder, favorite, reprompt |
+| `UpdateItem` | `(s id, s draft) → ()` | The kind must match the item's |
 | `Trash`, `Restore` | `(s id) → ()` | |
 
 ## Glimpse behaviour

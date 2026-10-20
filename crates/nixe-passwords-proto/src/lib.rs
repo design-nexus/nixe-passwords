@@ -40,6 +40,71 @@ pub mod field {
     pub const TOTP: &str = "totp";
 }
 
+/// The fields of cards, identities and SSH keys, for the daemon (which reads and
+/// writes them) and the window (which shows and edits them).
+pub mod fields {
+    /// A field of a card, identity or SSH key: where it is in the item, its name in the
+    /// interface, what to call it, and whether it stays hidden until asked for.
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct Spec {
+        pub section: &'static str,
+        pub key: &'static str,
+        pub name: &'static str,
+        pub label: &'static str,
+        pub secret: bool,
+    }
+
+    const fn spec(section: &'static str, key: &'static str, name: &'static str, label: &'static str, secret: bool) -> Spec {
+        Spec { section, key, name, label, secret }
+    }
+
+    pub const CARD: &[Spec] = &[
+        spec("card", "cardholderName", "card.cardholderName", "Cardholder", false),
+        spec("card", "brand", "card.brand", "Brand", false),
+        spec("card", "number", "card.number", "Number", true),
+        spec("card", "expMonth", "card.expMonth", "Expiry month", false),
+        spec("card", "expYear", "card.expYear", "Expiry year", false),
+        spec("card", "code", "card.code", "Security code", true),
+    ];
+
+    pub const IDENTITY: &[Spec] = &[
+        spec("identity", "title", "identity.title", "Title", false),
+        spec("identity", "firstName", "identity.firstName", "First name", false),
+        spec("identity", "middleName", "identity.middleName", "Middle name", false),
+        spec("identity", "lastName", "identity.lastName", "Last name", false),
+        spec("identity", "username", "identity.username", "Username", false),
+        spec("identity", "company", "identity.company", "Company", false),
+        spec("identity", "email", "identity.email", "Email", false),
+        spec("identity", "phone", "identity.phone", "Phone", false),
+        spec("identity", "address1", "identity.address1", "Address", false),
+        spec("identity", "address2", "identity.address2", "Address 2", false),
+        spec("identity", "address3", "identity.address3", "Address 3", false),
+        spec("identity", "city", "identity.city", "City", false),
+        spec("identity", "state", "identity.state", "State or province", false),
+        spec("identity", "postalCode", "identity.postalCode", "Postal code", false),
+        spec("identity", "country", "identity.country", "Country", false),
+        spec("identity", "ssn", "identity.ssn", "Social security number", true),
+        spec("identity", "passportNumber", "identity.passportNumber", "Passport number", true),
+        spec("identity", "licenseNumber", "identity.licenseNumber", "License number", true),
+    ];
+
+    pub const SSH_KEY: &[Spec] = &[
+        spec("sshKey", "publicKey", "ssh.publicKey", "Public key", false),
+        spec("sshKey", "keyFingerprint", "ssh.keyFingerprint", "Fingerprint", false),
+        spec("sshKey", "privateKey", "ssh.privateKey", "Private key", true),
+    ];
+
+    /// A kind's fields (`card`, `identity`, `ssh`), in the order they're shown.
+    pub fn of_kind(kind: &str) -> &'static [Spec] {
+        match kind {
+            "card" => CARD,
+            "identity" => IDENTITY,
+            "ssh" => SSH_KEY,
+            _ => &[],
+        }
+    }
+}
+
 /// One search result: `(id, name, username, host, has_totp, kind)`. `kind` is `login`,
 /// `note`, `card`, `identity`, `ssh` or `other`; `username` and `host` may be empty.
 pub type Item = (String, String, String, String, bool, String);

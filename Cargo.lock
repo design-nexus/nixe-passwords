@@ -4079,6 +4079,7 @@ dependencies = [
  "bitwarden-crypto",
  "bitwarden-encoding",
  "hkdf",
+ "nixe-passwords-proto",
  "psl",
  "rand 0.10.3",
  "regex",

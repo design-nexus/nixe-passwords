@@ -8,7 +8,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use crate::api::{ApiError, Server};
@@ -17,6 +17,7 @@ use crate::model::{Cipher, Kind, Login, LoginUri};
 use crate::secret::Secret;
 use crate::session::{Result, Session, SessionError};
 use crate::store::Store;
+use crate::vault::specs;
 
 /// Official clients keep this many old passwords per item.
 const HISTORY: usize = 5;
@@ -34,6 +35,23 @@ pub struct LoginDraft {
     pub favorite: bool,
     /// Ask for the master password again before showing the item's secrets.
     pub reprompt: bool,
+}
+
+/// What the user typed for a note, card or identity. `fields` are the kind's own fields
+/// by name (`card.number`, …; see `vault::specs`); one left out or empty is cleared.
+pub struct ItemDraft {
+    pub kind: Kind,
+    pub name: Secret,
+    pub fields: Vec<(String, Secret)>,
+    pub notes: Option<Secret>,
+    pub folder: Option<Uuid>,
+    pub favorite: bool,
+    pub reprompt: bool,
+}
+
+/// The kinds `create_item` and `update_item` handle (logins have their own draft).
+pub fn editable(kind: Kind) -> bool {
+    matches!(kind, Kind::Note | Kind::Card | Kind::Identity)
 }
 
 impl Session {
@@ -102,12 +120,87 @@ impl Session {
             }
             new.login = Some(login);
         }
+        self.send_update(store, server, &access, &old, &new).await
+    }
+
+    /// Creates a personal note, card or identity and returns its id.
+    pub async fn create_item(&mut self, store: &mut Store, server: &Server, refresh: &Secret, draft: &ItemDraft) -> Result<Uuid> {
+        if !editable(draft.kind) {
+            return Err(SessionError::Api(ApiError::Protocol));
+        }
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        let body = {
+            let mut key = self.keys.item(None, None)?;
+            let mut body = json!({
+                "type": draft.kind.number(),
+                "name": key.encrypt(draft.name.expose())?,
+                "notes": encrypt_opt(&mut key, draft.notes.as_ref())?,
+                "folderId": draft.folder,
+                "organizationId": null,
+                "key": null,
+                "favorite": draft.favorite,
+                "reprompt": i64::from(draft.reprompt),
+                "fields": null,
+                "passwordHistory": null,
+                "encryptedFor": self.snapshot.profile.id,
+            });
+            body[section_name(draft.kind)] = fill_section(&mut key, None, draft)?;
+            body
+        };
+        let made = server.create_cipher(&access, &body).await?;
+        let id = made.id;
+        self.take(store, made)?;
+        Ok(id)
+    }
+
+    /// Saves a changed note, card or identity. Its custom fields, attachments and any
+    /// field this client doesn't know are sent back as they were.
+    pub async fn update_item(
+        &mut self,
+        store: &mut Store,
+        server: &Server,
+        refresh: &Secret,
+        id: Uuid,
+        draft: &ItemDraft,
+    ) -> Result<()> {
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        let old = self.cipher(id)?.clone();
+        if old.kind() != draft.kind || !editable(draft.kind) {
+            return Err(SessionError::Api(ApiError::Protocol));
+        }
+        let mut new = old.clone();
+        {
+            let mut key = self.keys.item(old.organization_id, old.key.as_deref())?;
+            new.name = key.encrypt(draft.name.expose())?;
+            new.notes = encrypt_opt(&mut key, draft.notes.as_ref())?;
+            new.folder_id = draft.folder;
+            new.favorite = draft.favorite;
+            new.reprompt = i64::from(draft.reprompt);
+            let section = match draft.kind {
+                Kind::Note => &mut new.secure_note,
+                Kind::Card => &mut new.card,
+                _ => &mut new.identity,
+            };
+            *section = Some(fill_section(&mut key, section.as_ref(), draft)?);
+        }
+        self.send_update(store, server, &access, &old, &new).await
+    }
+
+    /// Sends an edit based on `old`. If the item changed elsewhere since, the server's
+    /// copy is brought in and the caller keeps its draft.
+    async fn send_update(
+        &mut self,
+        store: &mut Store,
+        server: &Server,
+        access: &Secret,
+        old: &Cipher,
+        new: &Cipher,
+    ) -> Result<()> {
         let body = new.to_request(self.snapshot.profile.id, Some(&old.revision_date));
-        match server.update_cipher(&access, id, &body).await {
+        match server.update_cipher(access, old.id, &body).await {
             Ok(saved) => self.take(store, saved),
             Err(ApiError::Conflict) => {
-                // Bring in what the server has now; the caller keeps the draft.
-                let latest = server.get_cipher(&access, id).await?;
+                let latest = server.get_cipher(access, old.id).await?;
                 self.take(store, latest)?;
                 Err(SessionError::Api(ApiError::Conflict))
             }
@@ -152,6 +245,32 @@ fn encrypt_opt(key: &mut ItemKey, value: Option<&Secret>) -> Result<Option<Strin
         Some(v) => Ok(Some(key.encrypt(v.expose())?)),
         None => Ok(None),
     }
+}
+
+fn section_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Note => "secureNote",
+        Kind::Card => "card",
+        _ => "identity",
+    }
+}
+
+/// A note's, card's or identity's own part of a request: each of the kind's fields from
+/// the draft, encrypted, or null when empty. Keys this client doesn't know stay as they
+/// were.
+fn fill_section(key: &mut ItemKey, old: Option<&Value>, draft: &ItemDraft) -> Result<Value> {
+    let mut section = match old {
+        Some(Value::Object(map)) => map.clone(),
+        _ => Map::new(),
+    };
+    if draft.kind == Kind::Note {
+        section.entry("type").or_insert(json!(0));
+    }
+    for spec in specs(draft.kind) {
+        let value = draft.fields.iter().find(|(name, _)| name == spec.name).map(|(_, v)| v);
+        section.insert(spec.key.into(), encrypt_opt(key, value)?.map_or(Value::Null, Value::String));
+    }
+    Ok(Value::Object(section))
 }
 
 /// The login part of a request. A web address that was already there keeps its match

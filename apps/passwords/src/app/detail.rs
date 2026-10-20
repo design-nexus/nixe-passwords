@@ -87,11 +87,12 @@ pub fn show(ui: &Ui) {
         bar.append(&restore);
     } else {
         let edit = w::labeled_button("document-edit-symbolic", "Edit");
-        edit.set_sensitive(e.kind == "login");
-        edit.set_tooltip_text(Some(if e.kind == "login" {
-            "Edit this login"
+        let editable = editor::KINDS.contains(&e.kind.as_str());
+        edit.set_sensitive(editable);
+        edit.set_tooltip_text(Some(if editable {
+            "Edit this item"
         } else {
-            "Only logins can be edited here so far; use the web vault for this item"
+            "This kind of item can't be edited here yet; use the web vault"
         }));
         let (u, entry) = (ui.clone(), e.clone());
         edit.connect_clicked(move |_| editor::open(&u, Some(entry.clone())));
@@ -165,11 +166,11 @@ fn describe(ui: &Ui, e: &Entry) -> String {
 }
 
 #[derive(serde::Deserialize)]
-struct FieldRow {
-    name: String,
-    label: String,
-    value: Option<String>,
-    secret: bool,
+pub(super) struct FieldRow {
+    pub name: String,
+    pub label: String,
+    pub value: Option<String>,
+    pub secret: bool,
 }
 
 fn show_fields(ui: &Ui, e: &Entry, into: &gtk::Box) {

@@ -2,7 +2,8 @@
 //!
 //!   PASSWORDS_SNAPSHOT=out.png            where to write
 //!   PASSWORDS_SNAPSHOT_SIGNIN=URL|EMAIL|PASSWORD   a throwaway test account to sign in to
-//!   PASSWORDS_SNAPSHOT_ITEMS=JSON         an array of login drafts to create first
+//!   PASSWORDS_SNAPSHOT_ITEMS=JSON         an array of drafts to create first (logins, or
+//!                                         notes, cards and identities with a `kind`)
 //!   PASSWORDS_SNAPSHOT_SELECT=NAME        the item to select
 //!   PASSWORDS_SNAPSHOT_SETTINGS=1         open the settings card
 //!   PASSWORDS_SNAPSHOT_SECTION=ID         the sidebar section
@@ -35,7 +36,8 @@ pub fn maybe(ui: &Ui, app: &gtk::Application) {
                     && let Ok(serde_json::Value::Array(items)) = serde_json::from_str(&items)
                 {
                     for item in items {
-                        let _ = client::call("CreateLogin", Some((item.to_string(),).to_variant())).await;
+                        let method = if item.get("kind").is_some() { "CreateItem" } else { "CreateLogin" };
+                        let _ = client::call(method, Some((item.to_string(),).to_variant())).await;
                     }
                 }
             }

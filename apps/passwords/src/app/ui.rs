@@ -119,10 +119,10 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     vault.append(&toolbar);
     let new = gtk::Button::new();
     new.add_css_class("suggested-action");
-    new.set_tooltip_text(Some("New login (Ctrl+N)"));
+    new.set_tooltip_text(Some("New item (Ctrl+N)"));
     let new_content = w::hbox(8);
     new_content.append(&gtk::Image::from_icon_name("list-add-symbolic"));
-    new_content.append(&gtk::Label::new(Some("New login")));
+    new_content.append(&gtk::Label::new(Some("New item")));
     new.set_child(Some(&new_content));
     toolbar.append(&new);
     let panes = w::hbox(0);
@@ -783,7 +783,7 @@ pub fn toast_action(ui: &Ui, text: &str, action: ToastAction<'_>) {
 }
 
 pub const SHORTCUTS: &[(&[&str], &str)] = &[
-    (&["Ctrl", "N"], "New login"),
+    (&["Ctrl", "N"], "New item"),
     (&["Ctrl", "F"], "Search the vault"),
     (&["Ctrl", "Shift", "U"], "Copy the username"),
     (&["Ctrl", "Shift", "C"], "Copy the password"),

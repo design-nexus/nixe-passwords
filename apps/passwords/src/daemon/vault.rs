@@ -8,14 +8,14 @@ use std::time::{Duration, Instant};
 
 use nixe_passwords_core::api::{ApiError, Server, TwoFactor, TwoFactorAnswer};
 use nixe_passwords_core::crypto::CryptoError;
-use nixe_passwords_core::edit::LoginDraft;
+use nixe_passwords_core::edit::{ItemDraft, LoginDraft};
 use nixe_passwords_core::generate;
 use nixe_passwords_core::keyring;
 use nixe_passwords_core::model::Kind;
 use nixe_passwords_core::secret::Secret;
 use nixe_passwords_core::session::{self, Session, SessionError, SignIn};
 use nixe_passwords_core::store::Store;
-use nixe_passwords_core::vault::{Entry, Field, RevealError, reveal};
+use nixe_passwords_core::vault::{Entry, Field, RevealError, reveal, specs};
 use nixe_passwords_proto::{Error as Code, Item, field, state};
 use serde::Deserialize;
 use serde_json::json;
@@ -530,6 +530,33 @@ impl Vault {
         Ok(())
     }
 
+    pub async fn create_item(&self, scope: Scope, draft: &str) -> Result<String> {
+        need(scope, Scope::App)?;
+        let draft = parse_item_draft(draft)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        st.edits += 1;
+        let id = session.create_item(&mut st.store, &server, &refresh, &draft).await?;
+        st.last_used = Instant::now();
+        Ok(id.to_string())
+    }
+
+    pub async fn update_item(&self, scope: Scope, id: &str, draft: &str) -> Result<()> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let draft = parse_item_draft(draft)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        st.edits += 1;
+        session.update_item(&mut st.store, &server, &refresh, id, &draft).await?;
+        st.last_used = Instant::now();
+        Ok(())
+    }
+
     pub async fn trash(&self, scope: Scope, id: &str, restore: bool) -> Result<()> {
         need(scope, Scope::App)?;
         let id = parse_id(id)?;
@@ -693,6 +720,49 @@ fn parse_draft(text: &str) -> Result<LoginDraft> {
     })
 }
 
+/// A note, card or identity draft: `{kind, name, fields: {"card.number": …}, notes,
+/// folder, favorite, reprompt}`. Field names must belong to the kind.
+fn parse_item_draft(text: &str) -> Result<ItemDraft> {
+    #[derive(Deserialize)]
+    struct Draft {
+        kind: String,
+        name: String,
+        #[serde(default)]
+        fields: std::collections::BTreeMap<String, String>,
+        #[serde(default)]
+        notes: Option<String>,
+        #[serde(default)]
+        folder: Option<Uuid>,
+        #[serde(default)]
+        favorite: bool,
+        #[serde(default)]
+        reprompt: bool,
+    }
+    let unreadable = || Failure::new(Code::Failed, "the item couldn't be read");
+    let d: Draft = serde_json::from_str(text).map_err(|_| unreadable())?;
+    let kind = match d.kind.as_str() {
+        "note" => Kind::Note,
+        "card" => Kind::Card,
+        "identity" => Kind::Identity,
+        _ => return Err(Failure::new(Code::Failed, "this kind of item can't be edited here")),
+    };
+    if d.name.trim().is_empty() {
+        return Err(Failure::new(Code::Failed, "the item needs a name"));
+    }
+    if d.fields.keys().any(|name| !specs(kind).iter().any(|s| s.name == name)) {
+        return Err(Failure::new(Code::NoField, "unknown field"));
+    }
+    Ok(ItemDraft {
+        kind,
+        name: Secret::new(d.name),
+        fields: d.fields.into_iter().map(|(n, v)| (n, Secret::new(v))).collect(),
+        notes: d.notes.filter(|s| !s.is_empty()).map(Secret::new),
+        folder: d.folder,
+        favorite: d.favorite,
+        reprompt: d.reprompt,
+    })
+}
+
 fn kind_name(kind: Kind) -> &'static str {
     match kind {
         Kind::Login => "login",
@@ -776,6 +846,11 @@ mod tests {
         assert!(d.username.is_none() && d.password.is_some());
         assert!(parse_draft(r#"{"name":"  "}"#).is_err());
         assert!(parse_draft("not json").is_err());
+        let d = parse_item_draft(r#"{"kind":"card","name":"Visa","fields":{"card.number":"4111"},"notes":""}"#).unwrap();
+        assert_eq!((d.kind, d.fields.len(), d.notes.is_none()), (Kind::Card, 1, true));
+        assert!(parse_item_draft(r#"{"kind":"card","name":"Visa","fields":{"identity.ssn":"1"}}"#).is_err());
+        assert!(parse_item_draft(r#"{"kind":"login","name":"GitHub"}"#).is_err());
+        assert!(parse_item_draft(r#"{"kind":"ssh","name":"Key"}"#).is_err());
     }
 
     #[test]
