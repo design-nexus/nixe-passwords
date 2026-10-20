@@ -57,6 +57,7 @@
 ## Phase 4 / 5
 See PLAN.md.
 - [x] Phase 5: threat-model review against the code ([REVIEW.md](REVIEW.md)); six fixes
+- [x] Phase 5: fuzzing (`crates/nixe-passwords-core/fuzz`, six targets, `run.sh`); first run found nothing
 - [x] Item view: card, identity and SSH key fields and custom fields, with copy and reveal (`Fields`; secret values only through `Reveal`)
 - [x] Editing notes, cards and identities (`CreateItem`, `UpdateItem`; fields the app doesn't know are kept)
 - [x] Editing SSH keys: generate (Ed25519) or import an OpenSSH private key; the public key and fingerprint always come from it

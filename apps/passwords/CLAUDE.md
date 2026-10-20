@@ -16,6 +16,9 @@
   throwaway server: `apps/passwords/scripts/test-server.sh start`, then
   `NIXE_PW_TEST_SERVER=https://127.0.0.1:8087 NIXE_PW_TEST_CA=$PWD/target/vaultwarden-test/ca.pem cargo test … -- --ignored --skip client`.
   Never point them at a real server.
+- Fuzzing: `crates/nixe-passwords-core/fuzz/run.sh [seconds] [target…]` (needs a
+  rustup nightly and `cargo install cargo-fuzz`). Targets: sync, enc_string, pairing,
+  totp, matching, ssh; seeds in `fuzz/seeds/`, crashes in `fuzz/artifacts/`.
 - Layout checks: debug builds render to a PNG with `PASSWORDS_SNAPSHOT=out.png`
   (`src/app/snapshot.rs`). Use a short `XDG_RUNTIME_DIR` for scratch runs: socket
   paths are limited to 108 bytes.

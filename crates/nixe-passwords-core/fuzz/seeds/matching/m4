@@ -1,0 +1,2 @@
+^https://([a-z]+\.)?example\.com/.*$
+https://www.example.com/a

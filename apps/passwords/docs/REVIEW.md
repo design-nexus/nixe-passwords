@@ -43,9 +43,26 @@ threat model was written.
 - **Breach check:** only five-character SHA-1 prefixes leave the device, with padding,
   and only after the user confirms. The vault lock isn't held during the requests.
 
+### Fuzzing (2026-10-20)
+
+`crates/nixe-passwords-core/fuzz`, with cargo-fuzz (libFuzzer, AddressSanitizer), 150 s
+per target from the seeds in `fuzz/seeds/`. No crash, hang or memory blow-up:
+
+| Target | What it feeds | Runs |
+| --- | --- | --- |
+| `sync` | The server's sync answer: parse, every cipher's accessors and request body, serialize again | 2.4 M |
+| `enc_string` | Encrypted values, decrypted as text, bytes and attachment files with a fixed key | 12 M |
+| `pairing` | A browser's handshake key and sealed frames | 9.8 M |
+| `totp` | `otpauth://`, `steam://` and base32 seeds, then a code | 6.7 M |
+| `matching` | An address and its rule against a page, regex rules included | 0.45 M |
+| `ssh` | Private key text | 38 M |
+
+The daemon's own frame handling needs a running vault and isn't fuzzed directly; what
+it does with a frame before anything else is the JSON parse (size-limited) and the two
+calls `pairing` covers.
+
 ### Left open
 
-- Fuzzing the parsers (next in Phase 5).
 - The extension in Firefox, Chromium and Brave, and the web vault check, need hands.
 - Locking on screen lock and sleep, and paste once, are built but not yet tried on the
   desktop.
