@@ -33,7 +33,10 @@ pub fn show(ui: &Ui, e: &Entry, into: &gtk::Box) {
         into.append(&label("ATTACHMENTS", "group-title"));
         let rows = w::vbox(0);
         rows.add_css_class("group-list");
-        into.append(&rows);
+        // With no files yet there's only the attach button: no empty list above it.
+        if !list.is_empty() {
+            into.append(&rows);
+        }
         for a in list {
             let actions = w::hbox(4);
             let save = w::bar_button("document-save-symbolic", "Save to a file…");
@@ -49,7 +52,8 @@ pub fn show(ui: &Ui, e: &Entry, into: &gtk::Box) {
             rows.append(&w::row(&a.name, &size(a.size), Some(actions.upcast_ref())));
         }
         if e.editable && !e.deleted {
-            let attach = w::labeled_button("mail-attachment-symbolic", "Attach file…");
+            let attach = gtk::Button::from_icon_name("mail-attachment-symbolic");
+            attach.set_tooltip_text(Some("Attach a file…"));
             attach.set_halign(gtk::Align::Start);
             let (u, id) = (ui.clone(), e.id.clone());
             attach.connect_clicked(move |b| attach_file(&u, b, &id));

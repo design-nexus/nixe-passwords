@@ -23,7 +23,7 @@ fn selected_entry(ui: &Ui) -> Option<Entry> {
 pub fn show(ui: &Ui) {
     ui.detail_serial.set(ui.detail_serial.get() + 1);
     clear(&ui.details);
-    let back = w::labeled_button("go-previous-symbolic", "Items");
+    let back = gtk::Button::from_icon_name("go-previous-symbolic");
     back.set_tooltip_text(Some("Back to the list (Esc)"));
     back.set_halign(gtk::Align::Start);
     back.set_visible(ui.narrow.get());
@@ -80,14 +80,14 @@ pub fn show(ui: &Ui) {
 
     let bar = w::hbox(6);
     if e.deleted {
-        let restore = w::labeled_button("edit-undo-symbolic", "Restore");
+        let restore = gtk::Button::from_icon_name("edit-undo-symbolic");
         restore.add_css_class("suggested-action");
         allow(&restore, e.restorable, "Restore this item", "Its organization doesn't let you restore it");
         let (u, id) = (ui.clone(), e.id.clone());
         restore.connect_clicked(move |_| set_trashed(&u, &id, false));
         bar.append(&restore);
     } else {
-        let edit = w::labeled_button("document-edit-symbolic", "Edit");
+        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
         if !editor::KINDS.contains(&e.kind.as_str()) {
             allow(&edit, false, "", "This kind of item can't be edited here yet; use the web vault");
         } else {
@@ -96,7 +96,7 @@ pub fn show(ui: &Ui) {
         let (u, entry) = (ui.clone(), e.clone());
         edit.connect_clicked(move |_| editor::open(&u, Some(entry.clone())));
         bar.append(&edit);
-        let trash = w::labeled_button("user-trash-symbolic", "Move to trash");
+        let trash = gtk::Button::from_icon_name("user-trash-symbolic");
         allow(&trash, e.deletable, "Move this item to the trash", "Its organization doesn't let you delete it");
         let (u, id) = (ui.clone(), e.id.clone());
         trash.connect_clicked(move |_| set_trashed(&u, &id, true));

@@ -146,13 +146,18 @@ pub fn open(ui: &Ui) {
         .as_ref()
         .map(|c| glib::markup_escape_text(&c.display().to_string()).to_string())
         .unwrap_or_else(|| "For a server whose certificate comes from your own authority.".into());
-    let (row, button) =
-        w::button_row("Extra certificate", &ca_desc, if v.extra_ca.is_some() { "Remove" } else { "Choose…" }, |_| {});
+    let (row, button) = w::button_row("Extra certificate", &ca_desc, "", |_| {});
+    // One button: choose a file, or remove the one chosen.
+    let shows = |b: &gtk::Button, chosen: bool| {
+        b.set_icon_name(if chosen { "edit-delete-symbolic" } else { "document-open-symbolic" });
+        b.set_tooltip_text(Some(if chosen { "Remove the certificate" } else { "Choose a certificate file…" }));
+    };
+    shows(&button, v.extra_ca.is_some());
     let u = ui.clone();
     button.connect_clicked(move |b| {
         if prefs::get().vault.extra_ca.is_some() {
             prefs::update(|p| p.vault.extra_ca = None);
-            b.set_label("Choose…");
+            shows(b, false);
             return;
         }
         let dialog = gtk::FileDialog::builder().title("Certificate authority (PEM)").build();
@@ -160,7 +165,7 @@ pub fn open(ui: &Ui) {
         dialog.open(Some(&u.window), gtk::gio::Cancellable::NONE, move |file| {
             if let Some(path) = file.ok().and_then(|f| f.path()) {
                 prefs::update(|p| p.vault.extra_ca = Some(path));
-                b.set_label("Remove");
+                shows(&b, true);
             }
         });
     });

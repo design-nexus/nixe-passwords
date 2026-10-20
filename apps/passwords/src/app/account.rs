@@ -292,7 +292,7 @@ fn unlock_page(ui: &Ui) {
     let go = gtk::Button::with_label("Unlock");
     go.add_css_class("suggested-action");
     // Shown when a key is saved in the keyring (Settings, "Unlock with the keyring").
-    let keyring = gtk::Button::with_label("Use the keyring");
+    let keyring = gtk::Button::from_icon_name("changes-allow-symbolic");
     keyring.set_tooltip_text(Some("Unlock with the key saved in your desktop keyring"));
     keyring.set_visible(false);
     card.append(&buttons(&[&sign_out, &keyring, &go]));
@@ -304,13 +304,12 @@ fn unlock_page(ui: &Ui) {
     });
     let (u, e) = (ui.clone(), err.clone());
     keyring.connect_clicked(move |b| {
-        busy(b, "Unlocking…");
+        b.set_sensitive(false);
         show_error(&e, "");
         let (ui, err, b) = (u.clone(), e.clone(), b.clone());
         glib::spawn_future_local(async move {
             let reply = client::call("UnlockWithKeyring", None).await;
             b.set_sensitive(true);
-            b.set_label("Use the keyring");
             match reply {
                 Ok(_) => {
                     ui::set_state(&ui, state::UNLOCKED);

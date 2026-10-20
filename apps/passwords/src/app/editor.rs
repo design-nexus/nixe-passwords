@@ -100,8 +100,10 @@ impl KeyPicker {
         body.append(&summary);
         body.append(&public);
         let buttons = w::hbox(6);
-        let generate = w::labeled_button("view-refresh-symbolic", "Generate new key");
-        let import = w::labeled_button("document-open-symbolic", "Import from file…");
+        let generate = gtk::Button::from_icon_name("view-refresh-symbolic");
+        generate.set_tooltip_text(Some("Generate a new Ed25519 key"));
+        let import = gtk::Button::from_icon_name("document-open-symbolic");
+        import.set_tooltip_text(Some("Import a private key file…"));
         buttons.append(&generate);
         buttons.append(&import);
         body.append(&buttons);
