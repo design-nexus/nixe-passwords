@@ -26,7 +26,7 @@ share="${XDG_DATA_HOME:-$HOME/.local/share}"
 config="${XDG_CONFIG_HOME:-$HOME/.config}"
 for a in "${apps[@]}"; do
   case $a in
-    settings) bins="nixe-settings nixe-settings-helper" ids="Settings" ;;
+    settings) bins="nixe-settings nixe-settings-helper nixe-goa-helper" ids="Settings" ;;
     store) bins="nixe-store" ids="Store" ;;
     media-player) bins="nixe-media-player" ids="MediaPlayer" ;;
     office) bins="nixe-office nixe-write nixe-sheets nixe-present" ids="Write Sheets Present" ;;

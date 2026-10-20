@@ -24,7 +24,7 @@ die() { printf '\033[31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 app_info() {
   dir=$1 pkg="nixe-$1" bins="nixe-$1" deps="" ids="" old_bins="" old_desktops="" old_icons="" defaults=false
   case $1 in
-    settings) ids="Settings" old_bins="settings settings-helper"; bins="nixe-settings nixe-settings-helper" ;;
+    settings) ids="Settings" old_bins="settings settings-helper"; bins="nixe-settings nixe-settings-helper nixe-goa-helper" ;;
     glimpse) ids="Glimpse" bins="nixe-glimpse nixe-glimpsed nixe-glimpse-settings" deps="bubblewrap" ;;
     contacts) ids="Contacts" defaults=true ;;
     git) ids="Git" deps="gtksourceview5 libsecret git-lfs" ;;
@@ -169,6 +169,7 @@ if [[ $prebuilt == false ]]; then
   fi
   pkgs=()
   for a in "${apps[@]}"; do app_info "$a"; pkgs+=(-p "$pkg"); done
+  if [[ " ${apps[*]} " == *" settings "* ]]; then pkgs+=(-p nixe-goa-helper); fi
   if [[ " ${apps[*]} " == *" capture "* ]]; then pkgs+=(-p nixe-capture-glimpse); fi
   say "Building ${apps[*]} (a few minutes the first time)"
   (cd "$src" && cargo build --release "${locked[@]}" "${pkgs[@]}")
