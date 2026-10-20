@@ -57,6 +57,10 @@ type Methods = Vec<(u8, String)>;
 pub struct Service {
     pub vault: Arc<Vault>,
     pub scope: Scope,
+    /// For the browser bridge: the browser that started it.
+    pub browser: Option<(i32, String)>,
+    /// The peer's process, so its own window isn't taken for the one in front.
+    pub pid: i32,
 }
 
 #[interface(name = "io.github.design_nexus.nixe.Passwords1")]
@@ -71,7 +75,7 @@ impl Service {
     }
 
     async fn suggest(&self, limit: u32) -> Result<(String, Vec<Item>), Error> {
-        Ok(self.vault.suggest(self.scope, limit).await?)
+        Ok(self.vault.suggest(self.scope, self.pid, limit).await?)
     }
 
     /// Puts `field` (`username`, `password`, `totp`) of item `id` on the clipboard.
@@ -167,6 +171,28 @@ impl Service {
 
     async fn restore(&self, id: String) -> Result<(), Error> {
         Ok(self.vault.trash(self.scope, &id, true).await?)
+    }
+
+    /// Browser extensions waiting for confirmation (with their codes) and paired ones, as
+    /// JSON.
+    async fn pairings(&self) -> Result<String, Error> {
+        Ok(self.vault.pairings(self.scope).await?)
+    }
+
+    async fn confirm_pairing(&self, id: String) -> Result<(), Error> {
+        Ok(self.vault.confirm_pairing(self.scope, &id).await?)
+    }
+
+    async fn remove_pairing(&self, id: String) -> Result<(), Error> {
+        Ok(self.vault.remove_pairing(self.scope, &id).await?)
+    }
+
+    // ---- the browser bridge ----
+
+    /// One Native Messaging frame from extension `caller`; returns the reply frame.
+    async fn relay(&self, caller: String, frame: Vec<u8>) -> Result<Vec<u8>, Error> {
+        let Some(browser) = &self.browser else { return Err(Error::Denied("not allowed".into())) };
+        Ok(self.vault.relay(self.scope, &caller, browser, &frame).await?)
     }
 }
 

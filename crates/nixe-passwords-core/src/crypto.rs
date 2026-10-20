@@ -1,6 +1,8 @@
-//! The only module that names bitwarden-crypto (see docs/SECURITY.md, rule 1). Keys live
-//! in its `KeyStore` and are referred to by slot; nothing outside this module touches key
-//! material. Errors say what failed, never with what.
+//! The only module that names bitwarden-crypto or any cryptographic primitive (see
+//! docs/SECURITY.md, rule 1). Vault keys live in bitwarden-crypto's `KeyStore` and are
+//! referred to by slot; nothing outside this module touches key material. Pairing a
+//! browser extension uses RustCrypto's X25519, HKDF-SHA256 and AES-256-GCM. Errors say
+//! what failed, never with what.
 
 use std::fmt;
 use std::str::FromStr;
@@ -9,6 +11,8 @@ use bitwarden_crypto as bw;
 use bitwarden_crypto::{Decryptable, PrimitiveEncryptable};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use zeroize::Zeroizing;
 
 use crate::secret::{Secret, SecretBytes};
 
@@ -296,9 +300,147 @@ impl ItemKey<'_> {
     }
 }
 
+/// A browser extension's pairing key (docs/NATIVE_MESSAGING.md).
+pub struct PairKey(Zeroizing<[u8; 32]>);
+
+/// This side of a new pairing: the public key to send back, the shared key, and the
+/// six-digit code both sides show so the user can confirm them.
+pub struct Paired {
+    pub public: [u8; 32],
+    pub key: PairKey,
+    pub code: String,
+}
+
+const PAIR_INFO: &[u8] = b"nixe-passwords pair v1";
+const CODE_INFO: &[u8] = b"nixe-passwords code v1";
+const NONCE: usize = 12;
+
+/// Answers an extension's X25519 public key: `salt = theirs ‖ ours`,
+/// `key = HKDF(…, "nixe-passwords pair v1")`, `code = HKDF(…, "nixe-passwords code v1")`
+/// read as a big-endian u32, mod 1 000 000. A low-order point is refused.
+pub fn pair(their_public: &[u8]) -> Result<Paired> {
+    let theirs: [u8; 32] = their_public.try_into().map_err(|_| CryptoError::Malformed)?;
+    let theirs = x25519_dalek::PublicKey::from(theirs);
+    let secret = x25519_dalek::EphemeralSecret::random();
+    let public = x25519_dalek::PublicKey::from(&secret);
+    let shared = secret.diffie_hellman(&theirs);
+    if !shared.was_contributory() {
+        return Err(CryptoError::Malformed);
+    }
+    let (key, code) = derive_pairing(shared.as_bytes(), theirs.as_bytes(), public.as_bytes())?;
+    Ok(Paired { public: public.to_bytes(), key, code })
+}
+
+/// The pairing key and code from the X25519 shared secret and both public keys
+/// (the extension's first). apps/passwords/browser/test/pairing-vector.mjs does the same
+/// in WebCrypto; a test below holds both to one vector.
+fn derive_pairing(shared: &[u8; 32], extension: &[u8; 32], daemon: &[u8; 32]) -> Result<(PairKey, String)> {
+    let mut salt = [0u8; 64];
+    salt[..32].copy_from_slice(extension);
+    salt[32..].copy_from_slice(daemon);
+    let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(&salt), shared);
+    let mut key = Zeroizing::new([0u8; 32]);
+    hk.expand(PAIR_INFO, &mut *key).map_err(|_| CryptoError::Encrypt)?;
+    let mut code = [0u8; 4];
+    hk.expand(CODE_INFO, &mut code).map_err(|_| CryptoError::Encrypt)?;
+    Ok((PairKey(key), format!("{:06}", u32::from_be_bytes(code) % 1_000_000)))
+}
+
+impl PairKey {
+    /// `nonce ‖ AES-256-GCM(plain, aad)` with a random 96-bit nonce.
+    pub fn seal(&self, aad: &[u8], plain: &[u8]) -> Result<Vec<u8>> {
+        use aes_gcm::aead::{Aead, KeyInit, Payload};
+        let cipher = aes_gcm::Aes256Gcm::new_from_slice(&*self.0).map_err(|_| CryptoError::Encrypt)?;
+        let mut nonce = [0u8; NONCE];
+        rand::Rng::fill_bytes(&mut rand::rng(), &mut nonce);
+        let sealed = cipher.encrypt(&nonce.into(), Payload { msg: plain, aad }).map_err(|_| CryptoError::Encrypt)?;
+        Ok([&nonce[..], &sealed].concat())
+    }
+
+    /// The plaintext of `seal`'s output; fails on any change to it or to `aad`.
+    pub fn open(&self, aad: &[u8], sealed: &[u8]) -> Result<SecretBytes> {
+        use aes_gcm::aead::{Aead, KeyInit, Payload};
+        if sealed.len() < NONCE + 16 {
+            return Err(CryptoError::Malformed);
+        }
+        let cipher = aes_gcm::Aes256Gcm::new_from_slice(&*self.0).map_err(|_| CryptoError::Decrypt)?;
+        let (nonce, body) = sealed.split_at(NONCE);
+        let nonce: [u8; NONCE] = nonce.try_into().map_err(|_| CryptoError::Malformed)?;
+        cipher.decrypt(&nonce.into(), Payload { msg: body, aad }).map(SecretBytes::new).map_err(|_| CryptoError::Decrypt)
+    }
+
+    /// For storing (encrypted with the user key) and reading back.
+    pub fn export(&self) -> Secret {
+        Secret::new(bitwarden_encoding::B64::from(self.0.to_vec()).to_string())
+    }
+
+    pub fn import(stored: &Secret) -> Result<PairKey> {
+        let bytes = bitwarden_encoding::B64::try_from(stored.expose()).map_err(|_| CryptoError::Malformed)?;
+        let key: [u8; 32] = bytes.as_bytes().try_into().map_err(|_| CryptoError::Malformed)?;
+        Ok(PairKey(Zeroizing::new(key)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pairing_agrees_and_seals() {
+        let ext_secret = x25519_dalek::StaticSecret::random();
+        let ext_public = x25519_dalek::PublicKey::from(&ext_secret);
+        let paired = pair(ext_public.as_bytes()).unwrap();
+        // The extension derives the same key and code.
+        let shared = ext_secret.diffie_hellman(&x25519_dalek::PublicKey::from(paired.public));
+        let mut salt = [0u8; 64];
+        salt[..32].copy_from_slice(ext_public.as_bytes());
+        salt[32..].copy_from_slice(&paired.public);
+        let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(&salt), shared.as_bytes());
+        let mut key = [0u8; 32];
+        hk.expand(PAIR_INFO, &mut key).unwrap();
+        let mut code = [0u8; 4];
+        hk.expand(CODE_INFO, &mut code).unwrap();
+        assert_eq!(format!("{:06}", u32::from_be_bytes(code) % 1_000_000), paired.code);
+        let theirs = PairKey(Zeroizing::new(key));
+
+        let sealed = paired.key.seal(b"p1|7", b"{\"t\":\"status\"}").unwrap();
+        assert_eq!(theirs.open(b"p1|7", &sealed).unwrap().expose(), b"{\"t\":\"status\"}");
+        // Another aad (a replayed counter) or a flipped bit fails.
+        assert_eq!(theirs.open(b"p1|8", &sealed).err(), Some(CryptoError::Decrypt));
+        let mut bent = sealed.clone();
+        bent[20] ^= 1;
+        assert_eq!(theirs.open(b"p1|7", &bent).err(), Some(CryptoError::Decrypt));
+        assert_eq!(theirs.open(b"p1|7", &sealed[..10]).err(), Some(CryptoError::Malformed));
+        // Two seals of the same message differ (fresh nonces).
+        assert_ne!(paired.key.seal(b"a", b"x").unwrap(), paired.key.seal(b"a", b"x").unwrap());
+        // Storage round trip.
+        let back = PairKey::import(&paired.key.export()).unwrap();
+        assert_eq!(back.open(b"p1|7", &sealed).unwrap().expose(), b"{\"t\":\"status\"}");
+    }
+
+    /// The same vector as apps/passwords/browser/test/pairing-vector.mjs (WebCrypto).
+    #[test]
+    fn pairing_matches_webcrypto() {
+        let ext: [u8; 32] = std::array::from_fn(|i| i as u8 + 1);
+        let daemon: [u8; 32] = std::array::from_fn(|i| i as u8 + 33);
+        let ext_secret = x25519_dalek::StaticSecret::from(ext);
+        let daemon_secret = x25519_dalek::StaticSecret::from(daemon);
+        let ext_public = x25519_dalek::PublicKey::from(&ext_secret);
+        let daemon_public = x25519_dalek::PublicKey::from(&daemon_secret);
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        assert_eq!(hex(ext_public.as_bytes()), "07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c");
+        assert_eq!(hex(daemon_public.as_bytes()), "5869aff450549732cbaaed5e5df9b30a6da31cb0e5742bad5ad4a1a768f1a67b");
+        let shared = daemon_secret.diffie_hellman(&ext_public);
+        let (key, code) = derive_pairing(shared.as_bytes(), ext_public.as_bytes(), daemon_public.as_bytes()).unwrap();
+        assert_eq!(hex(&*key.0), "6d901307a3ed370eeb7ab8620e7eeaa9bf4b62e8ede14fe720daee41de4fb16b");
+        assert_eq!(code, "538653");
+    }
+
+    #[test]
+    fn low_order_points_are_refused() {
+        assert_eq!(pair(&[0u8; 32]).err(), Some(CryptoError::Malformed));
+        assert_eq!(pair(&[1u8; 31]).err(), Some(CryptoError::Malformed));
+    }
 
     #[test]
     fn kdf_limits() {

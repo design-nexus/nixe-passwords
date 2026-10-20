@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Nixe Passwords",
+  "description": "Fill logins from Nixe Passwords, your Vaultwarden vault on this computer.",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3Hq9sd8FoIANfMfzDq8451AyCNq+tXg40KFIxQTXzJ6glJkcZlWpjrpNKfc7qkuW/HZIUSl8CvAr3/Fsrq4zYV4P1mdGSUoJsQi4/ARZ41sg7lxt+iD/1crNl2j7Q7EFaTzFpN5xs5XPD4U5+ZnkdhROSjNsy5zSsPBZg/kC5ks4DqCUGX5/pMp7wSzO2yHI8pf2BWwDQsiEs2Sf3nvLHMqZlOs1YM336z2XB2i8Va1GkUu3BYhIpqwD+AniHyHjKktajAV+5W0hj+Fa2vBY1VzHEQ+eMBUUBKqftkiVeVMui+y/qErgwgwKe8GSlHpkbrSNpPrMb838RlHLPfJifwIDAQAB",
+  "minimum_chrome_version": "133",
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Nixe Passwords" },
+  "permissions": ["nativeMessaging", "storage", "activeTab", "scripting", "tabs", "alarms"],
+  "commands": {
+    "fill-login": { "suggested_key": { "default": "Ctrl+Shift+L" }, "description": "Fill the login for this page" }
+  },
+  "icons": { "48": "icon-48.png", "128": "icon-128.png" }
+}

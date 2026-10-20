@@ -1,6 +1,7 @@
 //! `nixe-passwordsd`: holds the vault's keys and serves the app, Glimpse and the
 //! Settings page over a private socket (docs/ARCHITECTURE.md).
 
+mod browser;
 mod clipboard;
 mod notify;
 pub mod peer;
@@ -107,7 +108,7 @@ async fn serve() -> i32 {
 /// before a single message is read.
 async fn connection(stream: tokio::net::UnixStream, vault: Arc<Vault>, allowed: PathBuf) {
     let Some(peer) = peer::identify(stream.as_raw_fd(), &allowed) else { return };
-    let service = Service { vault, scope: peer.scope };
+    let service = Service { vault, scope: peer.scope, browser: peer.browser, pid: peer.pid };
     let built = async {
         zbus::connection::Builder::unix_stream(stream)
             .server(zbus::Guid::generate())?

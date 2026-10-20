@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Nixe Passwords",
+  "description": "Fill logins from Nixe Passwords, your Vaultwarden vault on this computer.",
+  "version": "0.1.0",
+  "browser_specific_settings": {
+    "gecko": { "id": "nixe-passwords@design-nexus.github.io", "strict_min_version": "130.0" }
+  },
+  "background": { "scripts": ["background.js"] },
+  "action": { "default_popup": "popup.html", "default_title": "Nixe Passwords" },
+  "permissions": ["nativeMessaging", "storage", "activeTab", "scripting", "tabs", "alarms"],
+  "commands": {
+    "fill-login": { "suggested_key": { "default": "Ctrl+Shift+L" }, "description": "Fill the login for this page" }
+  },
+  "icons": { "48": "icon-48.png", "128": "icon-128.png" }
+}

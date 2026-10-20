@@ -19,16 +19,36 @@ pub enum Scope {
     Glimpse,
     /// The Settings page: status, lock, sync.
     Settings,
+    /// The browser bridge: sealed messages from a paired extension (`Relay`) only.
+    Browser,
 }
 
 /// The executables allowed to connect, by file name, and their scopes.
-const PEERS: &[(&str, Scope)] =
-    &[("nixe-passwords", Scope::App), ("nixe-glimpse", Scope::Glimpse), ("nixe-passwords-settings", Scope::Settings)];
+const PEERS: &[(&str, Scope)] = &[
+    ("nixe-passwords", Scope::App),
+    ("nixe-glimpse", Scope::Glimpse),
+    ("nixe-passwords-settings", Scope::Settings),
+    ("nixe-passwords-bridge", Scope::Browser),
+];
+
+/// Browsers that start the bridge, by executable name, and what they're called in the
+/// pairing list.
+const BROWSERS: &[(&str, &str)] = &[
+    ("firefox", "Firefox"),
+    ("firefox-bin", "Firefox"),
+    ("zen", "Zen"),
+    ("zen-bin", "Zen"),
+    ("chromium", "Chromium"),
+    ("chrome", "Chrome"),
+    ("brave", "Brave"),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Peer {
     pub pid: i32,
     pub scope: Scope,
+    /// For the bridge: the browser that started it (its pid and name).
+    pub browser: Option<(i32, String)>,
 }
 
 /// Identifies the process behind `fd`, or `None` if it isn't one of ours.
@@ -46,7 +66,27 @@ pub fn identify(fd: RawFd, allowed_dir: &Path) -> Option<Peer> {
         return None;
     }
     let scope = scope_of(&exe, allowed_dir)?;
-    Some(Peer { pid: before, scope })
+    // The bridge counts only when a browser started it. Pairing, not this check, is
+    // what authenticates an extension; this keeps other programs off the bridge.
+    let browser = match scope {
+        Scope::Browser => Some(browser_parent(before)?),
+        _ => None,
+    };
+    if pidfd_pid(&pidfd)? != before {
+        return None;
+    }
+    Some(Peer { pid: before, scope, browser })
+}
+
+/// The browser that is `pid`'s parent: its pid and name.
+fn browser_parent(pid: i32) -> Option<(i32, String)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // The command name is in parentheses and may hold spaces; the parent pid follows
+    // the state field after it.
+    let ppid: i32 = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()?;
+    let exe = std::fs::read_link(format!("/proc/{ppid}/exe")).ok()?;
+    let name = exe.file_name()?.to_str()?;
+    BROWSERS.iter().find(|(n, _)| *n == name).map(|(_, b)| (ppid, b.to_string()))
 }
 
 /// The scope for an executable path: one of `PEERS`, in `allowed_dir`. A binary that
@@ -100,6 +140,7 @@ mod tests {
         assert_eq!(scope_of(&dir.join("nixe-passwords"), dir), Some(Scope::App));
         assert_eq!(scope_of(&dir.join("nixe-glimpse"), dir), Some(Scope::Glimpse));
         assert_eq!(scope_of(&dir.join("nixe-passwords-settings"), dir), Some(Scope::Settings));
+        assert_eq!(scope_of(&dir.join("nixe-passwords-bridge"), dir), Some(Scope::Browser));
         assert_eq!(scope_of(&dir.join("nixe-passwordsd"), dir), None);
         assert_eq!(scope_of(Path::new("/tmp/nixe-passwords"), dir), None);
         assert_eq!(scope_of(Path::new("/home/u/.local/bin/nixe-glimpse (deleted)"), dir), None);
@@ -115,5 +156,7 @@ mod tests {
         assert_eq!(peer_uid(a.as_raw_fd()), Some(unsafe { libc::getuid() }));
         let pidfd = peer_pidfd(a.as_raw_fd()).expect("SO_PEERPIDFD (Linux 6.5+)");
         assert_eq!(pidfd_pid(&pidfd), Some(std::process::id() as i32));
+        // This test's parent is cargo, not a browser.
+        assert_eq!(browser_parent(std::process::id() as i32), None);
     }
 }

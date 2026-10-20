@@ -20,6 +20,8 @@ pub struct Entry {
     pub name: Secret,
     pub username: Option<Secret>,
     pub uris: Vec<Secret>,
+    /// Each address's match rule (`matching::DOMAIN`, …; `None` is the default).
+    pub uri_rules: Vec<Option<i64>>,
     /// The first web address's host, lowercase, for icons and matching.
     pub host: Option<String>,
     pub folder: Option<Uuid>,
@@ -142,6 +144,19 @@ impl View {
         hits.into_iter().take(limit).map(|(_, e)| e).collect()
     }
 
+    /// Logins with a web address that matches `page` under its rule, favorites first.
+    /// The trash and unreadable items are left out.
+    pub fn matching(&self, page: &url::Url) -> Vec<&Entry> {
+        let mut hits: Vec<&Entry> = self
+            .entries
+            .iter()
+            .filter(|e| !e.deleted && e.readable && e.kind == Kind::Login)
+            .filter(|e| e.uris.iter().zip(&e.uri_rules).any(|(u, r)| crate::matching::matches(*r, u.expose(), page)))
+            .collect();
+        hits.sort_by_key(|e| !e.favorite);
+        hits
+    }
+
     fn score(&self, e: &Entry, words: &[String]) -> Option<u32> {
         let name = e.name.expose().to_lowercase();
         let user = e.username.as_ref().map(|u| u.expose().to_lowercase()).unwrap_or_default();
@@ -210,6 +225,7 @@ fn entry(keys: &Keys, c: &Cipher) -> Entry {
         name: Secret::new(""),
         username: None,
         uris: Vec::new(),
+        uri_rules: Vec::new(),
         host: None,
         folder: c.folder_id,
         organization: c.organization_id,
@@ -235,6 +251,7 @@ fn entry(keys: &Keys, c: &Cipher) -> Entry {
         for u in login.uris.iter().flatten() {
             if let Ok(Some(uri)) = key.decrypt_opt(u.uri.as_deref()) {
                 e.uris.push(uri);
+                e.uri_rules.push(u.match_rule);
             }
         }
         e.host = e.uris.iter().find_map(|u| host_of(u.expose()));

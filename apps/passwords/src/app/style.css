@@ -21,3 +21,4 @@ window.passwords-window .list-toolbar { min-height: 46px; padding: 0 12px 0 14px
 .editor-frame { border: 1px solid @hairline; border-radius: 6px; padding: 6px 8px; }
 .editor-frame:focus-within { border-color: @theme_accent; }
 textview.editor-text, textview.editor-text text { background: transparent; color: @theme_text; }
+.pairing-code { font-size: 2em; letter-spacing: 0.15em; color: @theme_accent; margin: 8px 0; }

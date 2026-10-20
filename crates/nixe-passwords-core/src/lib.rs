@@ -5,6 +5,7 @@ pub mod crypto;
 pub mod edit;
 pub mod generate;
 pub mod keyring;
+pub mod matching;
 pub mod model;
 pub mod secret;
 pub mod session;

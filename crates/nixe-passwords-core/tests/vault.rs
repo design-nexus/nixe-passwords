@@ -108,3 +108,16 @@ fn entries_never_print_their_contents() {
     let printed = format!("{:?} {:?}", e.name, e.username);
     assert!(!printed.contains("GitHub") && !printed.contains("octo"), "{printed}");
 }
+
+#[test]
+fn matching_pages() {
+    let (keys, sync, _) = open();
+    let view = View::build(&keys, &sync);
+    let page = |u: &str| url::Url::parse(u).unwrap();
+    // Both GitHub logins (one personal, one in the organization) saved https://github.com/login.
+    assert_eq!(view.matching(&page("https://github.com/settings")).len(), 2);
+    assert_eq!(view.matching(&page("https://gist.github.com/")).len(), 2);
+    assert!(view.matching(&page("http://github.com/")).is_empty());
+    assert!(view.matching(&page("https://github.io/")).is_empty());
+    assert!(view.matching(&page("https://example.com/")).is_empty());
+}

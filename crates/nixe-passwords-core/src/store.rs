@@ -62,6 +62,21 @@ pub struct Account {
     pub last_sync: Option<u64>,
 }
 
+/// A browser extension paired with this device (docs/NATIVE_MESSAGING.md). The key is
+/// encrypted with the user key, so it's usable only while the vault is unlocked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Pairing {
+    pub id: String,
+    /// The extension's id as the browser reports it.
+    pub extension: String,
+    /// "Firefox", "Zen", "Chromium", …
+    pub browser: String,
+    /// The pairing key, an EncString under the user key.
+    pub key: String,
+    /// Seconds since the epoch.
+    pub created: u64,
+}
+
 pub struct Store {
     db: Connection,
     path: PathBuf,
@@ -92,6 +107,10 @@ impl Store {
                  id TEXT NOT NULL,
                  json TEXT NOT NULL,
                  PRIMARY KEY (kind, id)
+             );
+             CREATE TABLE IF NOT EXISTS pairing (
+                 id TEXT PRIMARY KEY,
+                 json TEXT NOT NULL
              );",
         )
         .map_err(|_| StoreError::Open)?;
@@ -200,12 +219,35 @@ impl Store {
             .map_err(|_| StoreError::Write)
     }
 
-    /// Signing out: removes the account and the snapshot, and compacts the file so the
-    /// old pages are gone too.
+    /// Signing out: removes the account, the snapshot and browser pairings, and
+    /// compacts the file so the old pages are gone too.
     pub fn clear(&self) -> Result<()> {
         self.db
-            .execute_batch("DELETE FROM object; DELETE FROM account; PRAGMA wal_checkpoint(TRUNCATE); VACUUM;")
+            .execute_batch(
+                "DELETE FROM object; DELETE FROM account; DELETE FROM pairing;
+                 PRAGMA wal_checkpoint(TRUNCATE); VACUUM;",
+            )
             .map_err(|_| StoreError::Write)
+    }
+
+    pub fn put_pairing(&self, pairing: &Pairing) -> Result<()> {
+        self.db
+            .execute(
+                "INSERT INTO pairing (id, json) VALUES (?1, ?2) ON CONFLICT (id) DO UPDATE SET json = ?2",
+                params![pairing.id, to_json(pairing)?],
+            )
+            .map(|_| ())
+            .map_err(|_| StoreError::Write)
+    }
+
+    pub fn pairings(&self) -> Result<Vec<Pairing>> {
+        let mut q = self.db.prepare("SELECT json FROM pairing ORDER BY id").map_err(|_| StoreError::Read)?;
+        let rows = q.query_map([], |r| r.get::<_, String>(0)).map_err(|_| StoreError::Read)?;
+        rows.map(|r| serde_json::from_str(&r.map_err(|_| StoreError::Read)?).map_err(|_| StoreError::Corrupt)).collect()
+    }
+
+    pub fn remove_pairing(&self, id: &str) -> Result<()> {
+        self.db.execute("DELETE FROM pairing WHERE id = ?1", [id]).map(|_| ()).map_err(|_| StoreError::Write)
     }
 
     fn one(&self, kind: &str, id: &str) -> Result<Option<String>> {
@@ -345,6 +387,21 @@ mod tests {
         store.clear().unwrap();
         assert_eq!(store.account().unwrap(), None);
         assert_eq!(store.snapshot().unwrap(), None);
+    }
+
+    #[test]
+    fn pairings_are_kept_and_go_with_the_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+        let p =
+            Pairing { id: "p1".into(), extension: "ext@x".into(), browser: "Firefox".into(), key: "2.a|b|c".into(), created: 1 };
+        store.put_pairing(&p).unwrap();
+        assert_eq!(store.pairings().unwrap(), vec![p.clone()]);
+        store.remove_pairing("p1").unwrap();
+        assert!(store.pairings().unwrap().is_empty());
+        store.put_pairing(&p).unwrap();
+        store.clear().unwrap();
+        assert!(store.pairings().unwrap().is_empty());
     }
 
     #[test]

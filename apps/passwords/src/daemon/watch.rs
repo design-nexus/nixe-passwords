@@ -37,20 +37,39 @@ async fn screen(vault: Arc<Vault>) {
     }
 }
 
-/// `Some(true)` while Hyprland holds a session lock; `None` outside Hyprland.
-async fn hyprland_locked() -> Option<bool> {
+/// A JSON request to Hyprland's socket (`j/monitors`, …); `None` outside Hyprland.
+async fn hyprland(request: &str) -> Option<serde_json::Value> {
     let runtime = std::env::var("XDG_RUNTIME_DIR").ok()?;
     let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
     let path = format!("{runtime}/hypr/{signature}/.socket.sock");
     let ask = async {
         let mut sock = tokio::net::UnixStream::connect(&path).await.ok()?;
-        sock.write_all(b"j/monitors").await.ok()?;
+        sock.write_all(request.as_bytes()).await.ok()?;
         let mut reply = Vec::new();
         sock.take(4 << 20).read_to_end(&mut reply).await.ok()?;
         Some(reply)
     };
     let reply = tokio::time::timeout(Duration::from_secs(2), ask).await.ok()??;
-    let monitors: serde_json::Value = serde_json::from_slice(&reply).ok()?;
+    serde_json::from_slice(&reply).ok()
+}
+
+/// The pid of the window most recently in front that isn't `caller`'s own. When
+/// Glimpse asks, that's the window you were in before opening it.
+pub async fn front_pid(caller: i32) -> Option<i32> {
+    let clients = hyprland("j/clients").await?;
+    clients
+        .as_array()?
+        .iter()
+        .filter(|c| c["pid"].as_i64() != Some(caller as i64) && c["mapped"] != false)
+        .filter_map(|c| Some((c["focusHistoryID"].as_i64()?, c["pid"].as_i64()?)))
+        .filter(|(order, _)| *order >= 0)
+        .min()
+        .map(|(_, pid)| pid as i32)
+}
+
+/// `Some(true)` while Hyprland holds a session lock; `None` outside Hyprland.
+async fn hyprland_locked() -> Option<bool> {
+    let monitors = hyprland("j/monitors").await?;
     Some(
         monitors
             .as_array()?

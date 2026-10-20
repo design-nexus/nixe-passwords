@@ -5,6 +5,7 @@ mod client;
 mod data;
 mod detail;
 mod editor;
+mod pairing;
 pub mod prefs;
 mod settings;
 #[cfg(debug_assertions)]

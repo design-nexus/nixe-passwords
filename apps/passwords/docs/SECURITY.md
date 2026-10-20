@@ -62,6 +62,27 @@ against that. What Nixe Passwords does:
 - An attacker with the user's access can read the clipboard after a copy. That is the
   clipboard's nature (below).
 
+### Browser extensions
+
+- **Pairing:** an extension pairs only after the user compares a code in the
+  extension with the one the Passwords window shows, and confirms there.
+- **Where the key lives:**
+  - The extension keeps the pairing key in the browser's extension storage. Another
+    process running as the user can read it there, which is the same limit as above.
+  - The daemon keeps it encrypted under the user key, so a locked vault answers no
+    one.
+- **What a request can get:**
+  - only items whose web address matches the tab's URL under its rule;
+  - only for a frame on the same base domain;
+  - nothing for a plain-`http` page unless the address says `http://`;
+  - nothing from an item that asks for the master password again.
+- **Fill rate:** at most 30 fills a minute per pairing.
+- **Where the URL comes from:** the browser's tab API, never page content. The fill
+  re-checks the page's origin before typing anything, so a tab that navigated after
+  the request gets nothing.
+- **The bridge:** it relays sealed frames and can't read them. The daemon serves it
+  only when a browser started it.
+
 ## Rules for code
 
 1. **No custom cryptography.** Every KDF, cipher, MAC and key-wrap call goes through

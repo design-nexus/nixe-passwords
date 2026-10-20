@@ -28,7 +28,7 @@ app_info() {
     glimpse) ids="Glimpse" bins="nixe-glimpse nixe-glimpsed nixe-glimpse-settings" deps="bubblewrap" ;;
     contacts) ids="Contacts" defaults=true ;;
     git) ids="Git" deps="gtksourceview5 libsecret git-lfs" ;;
-    passwords) ids="Passwords" bins="nixe-passwords nixe-passwordsd nixe-passwords-settings" deps="libsecret" ;;
+    passwords) ids="Passwords" bins="nixe-passwords nixe-passwordsd nixe-passwords-settings nixe-passwords-bridge" deps="libsecret librsvg zip" ;;
     store) ids="Store" bins="nixe-store nixe-store-helper" deps="pacman appstream libarchive polkit base-devel libjxl" ;;
     tasks) ids="Tasks" old_bins="tasks" ;;
     torrents) ids="Torrents" old_bins="torrents" deps="libtorrent-rasterbar boost" defaults=true ;;
@@ -236,6 +236,19 @@ version = "0.1.0"
 description = "Vault locking, clipboard clearing and Glimpse."
 exec = "nixe-passwords-settings"
 MANIFEST
+    done
+    # The browser extension, built for installing from the browser, and the native
+    # messaging host for each browser that has a profile here.
+    "$d/scripts/build-extension.sh" "$share/nixe-passwords/browser" >/dev/null
+    host=io.github.design_nexus.nixe.passwords
+    for target in "firefox:$HOME/.mozilla/native-messaging-hosts" \
+      "chromium:$config/chromium/NativeMessagingHosts" \
+      "chromium:$config/google-chrome/NativeMessagingHosts" \
+      "chromium:$config/BraveSoftware/Brave-Browser/NativeMessagingHosts"; do
+      kind=${target%%:*} dir=${target#*:}
+      [[ -d $(dirname "$dir") ]] || continue
+      mkdir -p "$dir"
+      sed "s|@BRIDGE@|$bin/nixe-passwords-bridge|" "$d/browser/hosts/$kind.json" >"$dir/$host.json"
     done
   fi
 

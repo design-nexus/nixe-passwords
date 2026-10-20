@@ -75,11 +75,11 @@ impl From<RevealError> for Failure {
 
 pub type Result<T> = std::result::Result<T, Failure>;
 
-fn denied() -> Failure {
+pub(super) fn denied() -> Failure {
     Failure::new(Code::Denied, "not allowed")
 }
 
-fn locked() -> Failure {
+pub(super) fn locked() -> Failure {
     Failure::new(Code::Locked, "the vault is locked")
 }
 
@@ -88,26 +88,28 @@ pub enum SignInResult {
     TwoFactor(Vec<TwoFactor>),
 }
 
-struct State {
-    store: Store,
-    settings: Watched,
-    session: Option<Session>,
-    server: Option<Server>,
-    refresh: Option<Secret>,
-    last_used: Instant,
-    recent: VecDeque<Uuid>,
-    glimpse_copies: VecDeque<Instant>,
-    app_reveals: VecDeque<Instant>,
+pub(super) struct State {
+    pub(super) store: Store,
+    pub(super) settings: Watched,
+    pub(super) session: Option<Session>,
+    pub(super) server: Option<Server>,
+    pub(super) refresh: Option<Secret>,
+    pub(super) last_used: Instant,
+    pub(super) recent: VecDeque<Uuid>,
+    pub(super) glimpse_copies: VecDeque<Instant>,
+    pub(super) app_reveals: VecDeque<Instant>,
     /// When the app last confirmed the master password (for re-prompting items).
-    confirmed: Option<Instant>,
+    pub(super) confirmed: Option<Instant>,
     /// Counts edits, so a sync fetched before one isn't applied over it.
-    edits: u64,
+    pub(super) edits: u64,
+    /// Browser pairings and the active site (`browser.rs`).
+    pub(super) browser: super::browser::Browser,
 }
 
 pub struct Vault {
-    state: Mutex<State>,
+    pub(super) state: Mutex<State>,
     clipboard: Arc<StdMutex<Clipboard>>,
-    notifier: Notifier,
+    pub(super) notifier: Notifier,
 }
 
 impl Vault {
@@ -125,6 +127,7 @@ impl Vault {
                 app_reveals: VecDeque::new(),
                 confirmed: None,
                 edits: 0,
+                browser: Default::default(),
             }),
             clipboard: Arc::new(StdMutex::new(Clipboard::default())),
             notifier,
@@ -158,18 +161,28 @@ impl Vault {
         Ok(session.view.search(&query, limit.min(SEARCH_MAX) as usize).into_iter().map(item).collect())
     }
 
-    /// Recently used items. `origin` is empty until a browser extension can supply a
-    /// trusted active site (Phase 3).
-    pub async fn suggest(&self, scope: Scope, limit: u32) -> Result<(String, Vec<Item>)> {
+    /// Items for the active site when a paired browser reported it and was the window
+    /// in front before the caller's (its host is returned too); otherwise recently used
+    /// items and an empty host.
+    pub async fn suggest(&self, scope: Scope, caller: i32, limit: u32) -> Result<(String, Vec<Item>)> {
+        let focused = super::watch::front_pid(caller).await;
         let mut st = self.state.lock().await;
         allow_glimpse(scope, &mut st)?;
+        let site = super::browser::active_site(&st, focused);
         let session = st.session.as_ref().ok_or_else(locked)?;
+        let limit = limit.min(SEARCH_MAX) as usize;
+        if let Some(url) = site {
+            let items: Vec<Item> = session.view.matching(&url).into_iter().take(limit).map(item).collect();
+            if !items.is_empty() {
+                return Ok((url.host_str().unwrap_or_default().to_string(), items));
+            }
+        }
         let items = st
             .recent
             .iter()
             .filter_map(|id| session.view.get(*id))
             .filter(|e| !e.deleted && e.readable)
-            .take(limit.min(SEARCH_MAX) as usize)
+            .take(limit)
             .map(item)
             .collect();
         Ok((String::new(), items))
@@ -271,6 +284,7 @@ impl Vault {
         let session = {
             let mut st = self.state.lock().await;
             st.confirmed = None;
+            st.browser.lock();
             st.session.take()
         };
         if let Some(s) = session {
@@ -330,6 +344,7 @@ impl Vault {
         st.session = Some(session);
         st.last_used = Instant::now();
         st.recent.clear();
+        super::browser::load(st);
         Ok(SignInResult::Done)
     }
 
@@ -357,6 +372,7 @@ impl Vault {
             }
             st.session = Some(session);
             st.last_used = Instant::now();
+            super::browser::load(&mut st);
         }
         let me = self.clone();
         tokio::spawn(async move {
@@ -523,7 +539,7 @@ impl Vault {
     }
 }
 
-fn need(scope: Scope, wanted: Scope) -> Result<()> {
+pub(super) fn need(scope: Scope, wanted: Scope) -> Result<()> {
     if scope == wanted { Ok(()) } else { Err(denied()) }
 }
 
@@ -555,7 +571,7 @@ fn reprompt_check(st: &State, scope: Scope, id: Uuid, field: Field) -> Result<()
 }
 
 /// Whether one more event fits in `per_minute`, recording it if so.
-fn within(times: &mut VecDeque<Instant>, per_minute: usize) -> bool {
+pub(super) fn within(times: &mut VecDeque<Instant>, per_minute: usize) -> bool {
     let now = Instant::now();
     while times.front().is_some_and(|t| now.duration_since(*t) > Duration::from_secs(60)) {
         times.pop_front();
@@ -589,7 +605,7 @@ fn make_server(url: &str, extra_ca: Option<&std::path::Path>) -> Result<Server> 
     Server::new(url, &roots).map_err(|e| Failure::new(Code::Failed, e.to_string()))
 }
 
-fn generated(settings: &Settings, rules: Option<&str>) -> Result<Secret> {
+pub(super) fn generated(settings: &Settings, rules: Option<&str>) -> Result<Secret> {
     #[derive(Deserialize)]
     #[serde(tag = "kind", rename_all = "snake_case")]
     enum Rules {
@@ -608,7 +624,7 @@ fn generated(settings: &Settings, rules: Option<&str>) -> Result<Secret> {
     made.map_err(|e| Failure::new(Code::Failed, e.to_string()))
 }
 
-fn parse_id(id: &str) -> Result<Uuid> {
+pub(super) fn parse_id(id: &str) -> Result<Uuid> {
     Uuid::parse_str(id).map_err(|_| Failure::new(Code::NotFound, "no such item"))
 }
 

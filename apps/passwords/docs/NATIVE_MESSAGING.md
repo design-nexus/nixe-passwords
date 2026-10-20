@@ -1,19 +1,35 @@
 # Nixe Passwords — browser Native Messaging protocol
 
-Status: specification for Phase 3. Nothing here is implemented yet.
+Status: implemented, except saving new logins (`save`). The daemon side is tested end
+to end with the real bridge (`tests/daemon.rs`, `paired_browser`); the extension's
+pairing derivation is held to the daemon's by one test vector
+(`browser/test/pairing-vector.mjs`, `crypto.rs`'s `pairing_matches_webcrypto`).
 
 ## Pieces
 
 | Piece | Where |
 | --- | --- |
-| Extension | `apps/passwords/browser/` (one source, `manifest.firefox.json` and `manifest.chromium.json`) |
+| Extension | `apps/passwords/browser/` (one source in `src/`, `manifest.firefox.json` and `manifest.chromium.json`), built by `scripts/build-extension.sh` |
+| Extension ids | Firefox and Zen: `nixe-passwords@design-nexus.github.io`; Chromium, Chrome and Brave: `gjjphllfkicmjjeiecpfjefafbmgfnbl` (fixed by the manifest's `key`) |
 | Host | `nixe-passwords-bridge`, started by the browser for each extension connection |
 | Host name | `io.github.design_nexus.nixe.passwords` |
-| Host manifests | Firefox and Zen: `~/.mozilla/native-messaging-hosts/`; Chromium: `~/.config/chromium/NativeMessagingHosts/`; Brave: `~/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts/`; Chrome: `~/.config/google-chrome/NativeMessagingHosts/` |
+| Host manifests | Firefox and Zen: `~/.mozilla/native-messaging-hosts/` (both read `XREUserNativeManifests`); Chromium: `~/.config/chromium/NativeMessagingHosts/`; Brave: `~/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts/`; Chrome: `~/.config/google-chrome/NativeMessagingHosts/`. Templates in `browser/hosts/` |
 | Allowed callers | Firefox manifest `allowed_extensions`: the extension's fixed gecko id. Chromium manifest `allowed_origins`: `chrome-extension://<id>/` for the published key's id |
 
-The installer writes the host manifests only for browsers it finds, and only when
-browser integration is turned on.
+The installer writes a host manifest for each browser whose profile folder exists, and
+puts the built extension in `~/.local/share/nixe-passwords/browser`.
+
+**Installing the extension:**
+- **Chromium, Chrome, Brave:** "Load unpacked" from the `chromium` folder there, with
+  developer mode on.
+- **Zen:** "Install Add-on From File" with the `.xpi`, after setting
+  `xpinstall.signatures.required` to false in `about:config`. Zen's build doesn't
+  require signing.
+- **Firefox (release builds):** these require extensions signed by Mozilla. Without
+  that, the `.xpi` loads only as a temporary add-on (`about:debugging`) until the next
+  restart. Permanent options are signing it as an unlisted add-on with a Mozilla
+  account, or placing it in Firefox's own app folder, which this build accepts
+  unsigned (`MOZ_UNSIGNED_APP_SCOPE`) but which needs root.
 
 ## Framing
 
@@ -53,10 +69,15 @@ Pairing ties one browser profile to the daemon.
 
 ## Messages after pairing
 
-Each frame is `{"t":"msg","p":<pairing id>,"n":<counter>,"c":<b64 AES-256-GCM(k, nonce, json, aad = p ‖ n)>}`.
+Each frame is `{"t":"msg","p":<pairing id>,"n":<counter>,"c":<b64 nonce ‖ AES-256-GCM(k, nonce, json, aad = "p|n")>}`.
+The reply is sealed the same way with `aad = "p|n|r"`. Unsealed replies say only
+`pending`, `locked`, `unknown` (pair again) or `unavailable` (the daemon isn't there).
+Sealed requests are `{"r": "<request>", …}`; errors come back as `{"error": "<name>"}`
+with the names in `nixe-passwords-proto`.
 
-- **Counters:** they rise strictly. The daemon keeps the last one per pairing and drops
-  replays.
+- **Counters:** the extension uses the time in milliseconds (or one more than its
+  last). They must rise strictly per pairing and be within five minutes of the
+  daemon's clock, so a recorded frame can't be replayed, even after a restart.
 - **Failures:** a frame that fails to decrypt is dropped, and three failures close the
   connection.
 

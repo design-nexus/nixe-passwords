@@ -150,12 +150,14 @@ naming the field, never the value. Errors stay in Glimpse's footer.
 
 ### Site context for bare `pw`
 
-`Suggest` returns an origin only when all of these hold:
+`Suggest` returns an origin only when both of these hold:
 
-1. a paired browser extension reported the active tab's origin in the last 10 s;
-2. that report came through a bridge whose parent process is the browser;
-3. Hyprland's active window (`activewindow` over its socket) belongs to that browser's
-   process.
+1. **The site came from a paired extension.** It reports the active tab on every tab
+   switch, navigation and window focus, on load, and every 30 seconds. The last report
+   counts until the next one, or until the vault locks.
+2. **That browser was the window in front.** Its process, the bridge's parent, owns the
+   window most recently focused other than the caller's own. Hyprland's focus history
+   gives that, so when Glimpse asks, it's the window you were in before opening Glimpse.
 
 Window titles and URL text read from the screen are never used. Without trusted
 context, `pw` shows recent items.

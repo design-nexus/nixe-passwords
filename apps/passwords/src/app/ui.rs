@@ -346,6 +346,10 @@ fn watch_state(ui: &Ui) {
                 {
                     set_state(&ui, &st);
                 }
+                // A browser asking to pair shows here, while the vault is open.
+                if *ui.state.borrow() == state::UNLOCKED {
+                    super::pairing::check(&ui);
+                }
             });
         }
         glib::ControlFlow::Continue
@@ -647,6 +651,7 @@ fn nav(ui: &Ui) {
             chrome::set_title(&ui.window, "Passwords", "All items");
         }
     }
+    compact_sidebar(ui);
 }
 
 pub fn layout(ui: &Ui) {
@@ -654,7 +659,23 @@ pub fn layout(ui: &Ui) {
     let narrow = width > 0 && width < 980;
     nixe_ui::settings_card::fit(&ui.window);
     ui.narrow.set(narrow);
-    let compact = narrow || prefs::get().sidebar_collapsed;
+    compact_sidebar(ui);
+    let empty = visible(ui).is_empty();
+    ui.toolbar.set_visible(*ui.section.borrow() != "trash");
+    ui.list_scroll.set_hexpand(narrow || empty);
+    ui.list_scroll.set_visible(empty || !narrow || !ui.showing_detail.get());
+    ui.detail_scroll.set_visible(!empty && (!narrow || ui.showing_detail.get()));
+    if let Some(back) = ui.details.first_child() {
+        back.set_visible(narrow);
+    }
+    ui.list_scroll.set_width_request(if narrow || empty { -1 } else { 300 });
+}
+
+/// Puts the sidebar in its icon-only form (narrow window, or collapsed) or its full one.
+/// Runs after every rebuild of the sidebar too, or new buttons would show their labels
+/// in the narrow column.
+fn compact_sidebar(ui: &Ui) {
+    let compact = ui.narrow.get() || prefs::get().sidebar_collapsed;
     if compact {
         ui.sidebar.add_css_class("compact");
     } else {
@@ -677,15 +698,6 @@ pub fn layout(ui: &Ui) {
         }
     }
     hide(ui.nav.upcast_ref(), compact);
-    let empty = visible(ui).is_empty();
-    ui.toolbar.set_visible(*ui.section.borrow() != "trash");
-    ui.list_scroll.set_hexpand(narrow || empty);
-    ui.list_scroll.set_visible(empty || !narrow || !ui.showing_detail.get());
-    ui.detail_scroll.set_visible(!empty && (!narrow || ui.showing_detail.get()));
-    if let Some(back) = ui.details.first_child() {
-        back.set_visible(narrow);
-    }
-    ui.list_scroll.set_width_request(if narrow || empty { -1 } else { 300 });
 }
 
 fn find(ui: &Ui) {

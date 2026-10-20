@@ -196,6 +196,17 @@ pub fn open(ui: &Ui) {
         |p, x| p.vault.glimpse = x,
     );
 
+    let g = group(&body, "Browsers");
+    g.append(&w::row(
+        "Browser extension",
+        &glib::markup_escape_text(&format!(
+            "Install it from {}: “Load unpacked” in Chromium and Brave; “Install Add-on From File” in Firefox and Zen. Then pair from its button.",
+            nixe_core::paths::pretty(&nixe_core::paths::data_dir().join("browser"))
+        )),
+        None,
+    ));
+    super::pairing::fill_group(&g);
+
     let g = group(&body, "Passwords window");
     g.append(&w::start_row());
     let (row, dd) = w::choice_row(
@@ -273,6 +284,7 @@ pub fn open(ui: &Ui) {
                 ("Clipboard", "edit-paste-symbolic", "Clearing, notifications"),
                 ("Generator", "media-playlist-shuffle-symbolic", "Passwords and passphrases"),
                 ("Integrations", "system-search-symbolic", "Glimpse"),
+                ("Browsers", "web-browser-symbolic", "Paired browsers, the extension"),
                 ("Passwords window", "applications-graphics-symbolic", "Theme and motion"),
                 ("Keyboard", "input-keyboard-symbolic", "Shortcuts"),
             ],

@@ -1,0 +1,64 @@
+/* The Nixe look (STYLE.md): one flat surface, monospace, one accent. Tokyo Night. */
+:root {
+  --nx-bg: #1a1b26;
+  --nx-text: #c0caf5;
+  --nx-dim-text: #565f89;
+  --nx-accent: #7aa2f7;
+  --nx-border: #292e42;
+  --nx-danger: #f7768e;
+  --hairline: color-mix(in srgb, var(--nx-bg) 18%, var(--nx-border));
+  --nav-active: color-mix(in srgb, var(--nx-bg) 82%, var(--nx-accent));
+  --row-hover: color-mix(in srgb, var(--nx-bg) 93%, var(--nx-accent));
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  width: 340px;
+  background: var(--nx-bg);
+  color: var(--nx-text);
+  font: 500 13px "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.name { font-weight: 600; color: var(--nx-dim-text); }
+.host { color: var(--nx-dim-text); font-size: 0.88em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+
+main { padding: 6px 0; max-height: 360px; overflow-y: auto; }
+
+.note { margin: 10px 14px; line-height: 1.4; }
+.note.dim { color: var(--nx-dim-text); }
+.note.status { color: var(--nx-accent); }
+.code { margin: 12px 14px; font-size: 1.8em; letter-spacing: 0.15em; color: var(--nx-accent); }
+
+.item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; }
+.item:hover { background: var(--row-hover); }
+.item .text { flex: 1; min-width: 0; }
+.item .title, .item .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .sub { color: var(--nx-dim-text); font-size: 0.88em; }
+.actions { display: flex; gap: 6px; }
+
+footer { display: flex; justify-content: space-between; padding: 8px 14px; border-top: 1px solid var(--hairline); }
+footer:empty { display: none; }
+
+button {
+  font: inherit;
+  color: var(--nx-text);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+button:hover { background: var(--row-hover); }
+button.primary { background: var(--nav-active); border-color: transparent; font-weight: 600; }
+main > button { margin: 4px 14px 10px; }
+button.flat { border-color: transparent; color: var(--nx-dim-text); }

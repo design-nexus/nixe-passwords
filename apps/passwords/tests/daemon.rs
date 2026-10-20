@@ -29,9 +29,10 @@ impl Scratch {
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::copy(env!("CARGO_BIN_EXE_nixe-passwordsd"), bin.join("nixe-passwordsd")).unwrap();
         let me = std::env::current_exe().unwrap();
-        for name in ["nixe-passwords", "nixe-glimpse", "stranger"] {
+        for name in ["nixe-passwords", "nixe-glimpse", "stranger", "firefox"] {
             std::fs::copy(&me, bin.join(name)).unwrap();
         }
+        std::fs::copy(env!("CARGO_BIN_EXE_nixe-passwords-bridge"), bin.join("nixe-passwords-bridge")).unwrap();
         let config = dir.path().join("config/nixe-passwords");
         std::fs::create_dir_all(&config).unwrap();
         std::fs::write(config.join("settings.toml"), format!("notify_copies = false\n{extra_settings}")).unwrap();
@@ -113,12 +114,12 @@ async fn call_one(conn: &zbus::Connection, call: &[Value]) -> Value {
     let method = call[0].as_str().unwrap();
     let s = |i: usize| call[i].as_str().unwrap().to_string();
     let reply = match method {
-        "Status" | "Lock" | "Sync" | "List" | "Generate" | "SignOut" => {
+        "Status" | "Lock" | "Sync" | "List" | "Generate" | "SignOut" | "Pairings" => {
             conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &()).await
         }
         "Search" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), call[2].as_u64().unwrap() as u32)).await,
         "Copy" | "Reveal" | "UpdateLogin" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2))).await,
-        "Unlock" | "CreateLogin" | "OpenUrl" | "Trash" | "Restore" | "VerifyPassword" => {
+        "Unlock" | "CreateLogin" | "OpenUrl" | "Trash" | "Restore" | "VerifyPassword" | "ConfirmPairing" | "RemovePairing" => {
             conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1),)).await
         }
         "SignIn" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2), s(3), 255u8, String::new())).await,
@@ -323,4 +324,229 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+// ---- browsers ----
+
+impl Scratch {
+    /// Runs the `browser` role as a program called `firefox`, so the bridge it starts has a
+    /// browser for a parent. `step` is "hello" or a JSON list of requests.
+    fn as_browser(&self, step: &str) -> Vec<Value> {
+        let out = Command::new(self.dir.path().join("bin/firefox"))
+            .args(["--exact", "browser", "--ignored", "--nocapture", "--test-threads=1"])
+            .env("NIXE_PW_BROWSER_STEP", step)
+            .env("NIXE_PW_BROWSER_STATE", self.dir.path().join("extension.json"))
+            // The scratch session's daemon, never the real one.
+            .env("XDG_RUNTIME_DIR", self.dir.path().join("run"))
+            .env("XDG_CONFIG_HOME", self.dir.path().join("config"))
+            .env("HOME", self.dir.path())
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        let line =
+            text.lines().find_map(|l| l.split_once("RESULTS ").map(|(_, r)| r)).unwrap_or_else(|| panic!("browser: {text}"));
+        serde_json::from_str(line).unwrap()
+    }
+}
+
+fn b64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn unb64(text: &str) -> Vec<u8> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(text).unwrap()
+}
+
+/// The extension's side, run inside a copy of this executable named `firefox`: it talks
+/// to the real bridge exactly as a WebExtension would.
+#[test]
+#[ignore = "run by the daemon tests as a browser"]
+fn browser() {
+    use aes_gcm::aead::{Aead, KeyInit, Payload};
+    use std::io::{Read, Write};
+    let Ok(step) = std::env::var("NIXE_PW_BROWSER_STEP") else { return };
+    let state_file = std::env::var("NIXE_PW_BROWSER_STATE").unwrap();
+    let bridge = std::env::current_exe().unwrap().with_file_name("nixe-passwords-bridge");
+    let mut child = Command::new(bridge)
+        .args(["/tmp/manifest.json", "passwords@nixe"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = child.stdout.take().unwrap();
+    let mut send = |frame: &Value| -> Value {
+        let bytes = frame.to_string().into_bytes();
+        input.write_all(&(bytes.len() as u32).to_ne_bytes()).unwrap();
+        input.write_all(&bytes).unwrap();
+        input.flush().unwrap();
+        let mut len = [0u8; 4];
+        output.read_exact(&mut len).unwrap();
+        let mut reply = vec![0u8; u32::from_ne_bytes(len) as usize];
+        output.read_exact(&mut reply).unwrap();
+        serde_json::from_slice(&reply).unwrap()
+    };
+    let mut results = Vec::new();
+    if step == "hello" {
+        let secret = x25519_dalek::StaticSecret::random();
+        let public = x25519_dalek::PublicKey::from(&secret);
+        let reply = send(&json!({"t": "hello", "v": 1, "pub": b64(public.as_bytes())}));
+        if reply["t"] == "pairing" {
+            let theirs: [u8; 32] = unb64(reply["pub"].as_str().unwrap()).try_into().unwrap();
+            let shared = secret.diffie_hellman(&x25519_dalek::PublicKey::from(theirs));
+            let salt = [public.as_bytes().as_slice(), &theirs].concat();
+            let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(&salt), shared.as_bytes());
+            let mut key = [0u8; 32];
+            hk.expand(b"nixe-passwords pair v1", &mut key).unwrap();
+            let mut code = [0u8; 4];
+            hk.expand(b"nixe-passwords code v1", &mut code).unwrap();
+            let code = format!("{:06}", u32::from_be_bytes(code) % 1_000_000);
+            std::fs::write(&state_file, json!({"id": reply["p"], "key": b64(&key)}).to_string()).unwrap();
+            results.push(json!({"id": reply["p"], "code": code}));
+        } else {
+            results.push(reply);
+        }
+    } else {
+        let state: Value = serde_json::from_str(&std::fs::read_to_string(&state_file).unwrap()).unwrap();
+        let id = state["id"].as_str().unwrap().to_string();
+        let cipher = aes_gcm::Aes256Gcm::new_from_slice(&unb64(state["key"].as_str().unwrap())).unwrap();
+        let requests: Vec<Value> = serde_json::from_str(&step).unwrap();
+        let mut counter = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        let mut last: Option<Value> = None;
+        for request in requests {
+            let frame = if request["replay"] == true {
+                last.clone().unwrap()
+            } else {
+                counter += 1;
+                let n = if request["stale"] == true { counter - 10 * 60 * 1000 } else { counter };
+                let mut nonce = [0u8; 12];
+                rand::Rng::fill_bytes(&mut rand::rng(), &mut nonce);
+                let aad = format!("{id}|{n}");
+                let sealed =
+                    cipher.encrypt(&nonce.into(), Payload { msg: request.to_string().as_bytes(), aad: aad.as_bytes() }).unwrap();
+                json!({"t": "msg", "p": id, "n": n, "c": b64(&[&nonce[..], &sealed].concat())})
+            };
+            last = Some(frame.clone());
+            let reply = send(&frame);
+            if reply["t"] == "msg" {
+                let n = reply["n"].as_u64().unwrap();
+                let sealed = unb64(reply["c"].as_str().unwrap());
+                let (nonce, body) = sealed.split_at(12);
+                let nonce: [u8; 12] = nonce.try_into().unwrap();
+                let aad = format!("{id}|{n}|r");
+                let plain = cipher.decrypt(&nonce.into(), Payload { msg: body, aad: aad.as_bytes() }).unwrap();
+                results.push(serde_json::from_slice(&plain).unwrap());
+            } else {
+                results.push(reply);
+            }
+        }
+    }
+    drop(input);
+    let _ = child.wait();
+    println!("RESULTS {}", Value::Array(results));
+}
+
+#[test]
+fn bridge_needs_a_browser() {
+    use std::io::{Read, Write};
+    let s = Scratch::start("");
+    // Started by this test, not a browser: the daemon won't serve it.
+    let mut child = Command::new(s.dir.path().join("bin/nixe-passwords-bridge"))
+        .arg("passwords@nixe")
+        .env("XDG_RUNTIME_DIR", s.dir.path().join("run"))
+        .env("XDG_CONFIG_HOME", s.dir.path().join("config"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let frame = br#"{"t":"hello","v":1,"pub":"AAAA"}"#;
+    let mut input = child.stdin.take().unwrap();
+    input.write_all(&(frame.len() as u32).to_ne_bytes()).unwrap();
+    input.write_all(frame).unwrap();
+    input.flush().unwrap();
+    let mut out = child.stdout.take().unwrap();
+    let mut len = [0u8; 4];
+    out.read_exact(&mut len).unwrap();
+    let mut reply = vec![0u8; u32::from_ne_bytes(len) as usize];
+    out.read_exact(&mut reply).unwrap();
+    drop(input);
+    let _ = child.wait();
+    assert_eq!(serde_json::from_slice::<Value>(&reply).unwrap()["t"], "unavailable");
+}
+
+#[tokio::test]
+#[ignore = "needs NIXE_PW_TEST_SERVER"]
+async fn paired_browser() {
+    let (server, ca) = test_server().expect("NIXE_PW_TEST_SERVER and NIXE_PW_TEST_CA");
+    let email = format!("browser-{}@example.com", &uuid::Uuid::new_v4().simple().to_string()[..10]);
+    let password = "correct horse browser battery";
+    register(&server, &ca, &email, password).await;
+    let s = Scratch::start(&format!("extra_ca = {:?}\n", ca.display().to_string()));
+    let github = json!({"name": "GitHub", "username": "octo", "password": "canary-gh-Pw!9", "uris": ["https://github.com/login"], "totp": "JBSWY3DPEHPK3PXP"}).to_string();
+    let other =
+        json!({"name": "Other", "username": "x", "password": "canary-other-Pw!9", "uris": ["https://example.org"]}).to_string();
+    let app = s
+        .as_peer("nixe-passwords", json!([["SignIn", server, email, password], ["CreateLogin", github], ["CreateLogin", other]]));
+    assert_eq!(ok(&app[0])[0], true);
+    let (gh, other_id) = (ok(&app[1]).as_str().unwrap().to_string(), ok(&app[2]).as_str().unwrap().to_string());
+
+    // Pairing: the extension and the window show the same code; the user confirms.
+    let hello = s.as_browser("hello");
+    let (id, code) = (hello[0]["id"].as_str().unwrap().to_string(), hello[0]["code"].as_str().unwrap().to_string());
+    let before = s.as_browser(r#"[{"r":"status"}]"#);
+    assert_eq!(before[0]["t"], "pending");
+    let app = s.as_peer("nixe-passwords", json!([["Pairings"]]));
+    let listing: Value = serde_json::from_str(ok(&app[0]).as_str().unwrap()).unwrap();
+    assert_eq!(listing["pending"][0]["code"], code.as_str());
+    assert_eq!(listing["pending"][0]["browser"], "Firefox");
+    let app = s.as_peer("nixe-passwords", json!([["ConfirmPairing", id]]));
+    assert!(app[0].get("ok").is_some(), "{:?}", app[0]);
+
+    let page = "https://github.com/login";
+    let requests = json!([
+        {"r": "status"},
+        {"r": "match", "url": page},
+        {"r": "fill", "url": page, "id": gh},
+        {"r": "totp", "url": page, "id": gh},
+        {"r": "fill", "url": page, "id": other_id},
+        {"r": "fill", "url": page, "id": gh, "frame": "https://evil.example/frame"},
+        {"r": "fill", "url": page, "id": gh, "frame": "https://gist.github.com/x"},
+        {"r": "fill", "url": "http://github.com/login", "id": gh},
+        {"r": "match", "url": "https://github.com.evil.example/"},
+        {"replay": true},
+        {"r": "status", "stale": true},
+        {"r": "context", "url": page},
+    ]);
+    let r = s.as_browser(&requests.to_string());
+    assert_eq!(r[0]["state"], "unlocked");
+    let items = r[1]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!((items[0]["name"].as_str(), items[0]["username"].as_str()), (Some("GitHub"), Some("octo")));
+    assert_eq!(r[2], json!({"username": "octo", "password": "canary-gh-Pw!9"}));
+    assert_eq!(r[3]["code"].as_str().unwrap().len(), 6);
+    assert_eq!(r[4]["error"], "Denied", "another site's item");
+    assert_eq!(r[5]["error"], "Denied", "a frame from another site");
+    assert_eq!(r[6]["username"], "octo", "a frame on the same site");
+    assert_eq!(r[7]["error"], "Denied", "plain http");
+    assert_eq!(r[8]["items"], json!([]), "a lookalike domain");
+    assert_eq!(r[9]["t"], "error", "a replayed frame");
+    assert_eq!(r[10]["t"], "error", "a stale counter");
+    // No secret ever came back in clear.
+    for reply in &r {
+        assert_ne!(reply["t"], "msg");
+    }
+
+    // Locked: the extension learns only that.
+    let app = s.as_peer("nixe-passwords", json!([["Lock"]]));
+    assert!(app[0].get("ok").is_some());
+    let r = s.as_browser(r#"[{"r":"status"}]"#);
+    assert_eq!(r[0]["t"], "locked");
+
+    // After unlocking, the stored pairing works again; removing it ends it.
+    let app = s.as_peer("nixe-passwords", json!([["Unlock", password], ["RemovePairing", id]]));
+    assert!(app[0].get("ok").is_some() && app[1].get("ok").is_some());
+    let r = s.as_browser(r#"[{"r":"status"}]"#);
+    assert_eq!(r[0]["t"], "unknown");
 }
