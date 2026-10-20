@@ -533,6 +533,27 @@ async fn paired_browser() {
     assert_eq!(r[8]["items"], json!([]), "a lookalike domain");
     assert_eq!(r[9]["t"], "error", "a replayed frame");
     assert_eq!(r[10]["t"], "error", "a stale counter");
+    // Saving from the page: a new login, then a new password for the same username.
+    let r = s.as_browser(
+        &json!([
+            {"r": "save", "url": "https://example.net/signin", "username": "newbie", "password": "canary-saved-Pw!9"},
+            {"r": "save", "url": "https://example.net/login", "username": "newbie", "password": "canary-changed-Pw!9"},
+            {"r": "match", "url": "https://example.net/"},
+            {"r": "save", "url": "https://example.net/", "username": "x", "password": ""},
+        ])
+        .to_string(),
+    );
+    assert_eq!(r[0]["saved"], "created");
+    assert_eq!(r[1]["saved"], "updated");
+    assert_eq!(r[0]["id"], r[1]["id"]);
+    let saved = r[2]["items"].as_array().unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0]["username"], "newbie");
+    assert_eq!(r[3]["error"], "NoField");
+    let id_saved = saved[0]["id"].as_str().unwrap().to_string();
+    let r = s.as_browser(&json!([{"r": "fill", "url": "https://example.net/", "id": id_saved}]).to_string());
+    assert_eq!(r[0]["password"], "canary-changed-Pw!9");
+
     // No secret ever came back in clear.
     for reply in &r {
         assert_ne!(reply["t"], "msg");

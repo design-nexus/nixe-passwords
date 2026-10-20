@@ -583,7 +583,7 @@ pub(super) fn within(times: &mut VecDeque<Instant>, per_minute: usize) -> bool {
     true
 }
 
-fn online(st: &State) -> Result<(Server, Secret)> {
+pub(super) fn online(st: &State) -> Result<(Server, Secret)> {
     let server = st.server.clone().ok_or_else(|| Failure::new(Code::Failed, "no server"))?;
     let refresh = st.refresh.as_ref().map(|r| Secret::new(r.expose()));
     // An access token from this session works without a refresh token.

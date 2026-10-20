@@ -31,6 +31,8 @@ const MESSAGES = {
   NoField: "This login has no one-time code.",
   NoForm: "No login form found on this page.",
   NoUrl: "This page can't be filled.",
+  NoPassword: "Type the username and password into the page's form first.",
+  Failed: "Couldn't save: is Passwords online?",
 };
 
 async function refresh() {
@@ -119,12 +121,20 @@ async function showLogins() {
     const r = await ask({ cmd: "generate" });
     status(r.filled ? "Filled a new password. Save it in Passwords once you've signed up." : MESSAGES[r.error] ?? "No empty password field here.");
   });
+  const save = el("button", { title: "Save the username and password typed into this page" }, "Save login");
+  save.addEventListener("click", async () => {
+    const r = await ask({ cmd: "save" });
+    if (r.saved === "created") status(`Saved a new login${r.username ? ` for ${r.username}` : ""}.`);
+    else if (r.saved === "updated") status(`Updated the password for ${r.username || "this login"}.`);
+    else status(MESSAGES[r.error] ?? "Couldn't save the login.");
+    if (r.saved) showLogins();
+  });
   const unpair = el("button", { class: "flat", title: "Forget the pairing in this browser" }, "Unpair");
   unpair.addEventListener("click", async () => {
     await ask({ cmd: "unpair" });
     refresh();
   });
-  footer.replaceChildren(generate, unpair);
+  footer.replaceChildren(generate, save, unpair);
 }
 
 function status(text) {

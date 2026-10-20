@@ -1,6 +1,6 @@
 # Nixe Passwords — browser Native Messaging protocol
 
-Status: implemented, except saving new logins (`save`). The daemon side is tested end
+Status: implemented. The daemon side is tested end
 to end with the real bridge (`tests/daemon.rs`, `paired_browser`); the extension's
 pairing derivation is held to the daemon's by one test vector
 (`browser/test/pairing-vector.mjs`, `crypto.rs`'s `pairing_matches_webcrypto`).
@@ -88,7 +88,7 @@ with the names in `nixe-passwords-proto`.
 | `match {url}` | `[{id, name, username, has_totp}]` | unlocked; only items whose URIs match `url` under their match rule |
 | `fill {url, id, frame_url}` | `{username, password}` | unlocked, `id` is among `match(url)`, `frame_url` has the same base domain as `url` (or matches the item explicitly), and the request is marked as coming from a user gesture |
 | `totp {url, id}` | `{code, period_left}` | as `fill` |
-| `save {url, username, password}` | `{saved: id}` | unlocked; the daemon asks the user in the app or a notification before saving |
+| `save {url, username, password}` | `{saved: "created" or "updated", id, username}` | unlocked and online; sent only when the user clicks "Save login" in the popup, with what the page's form holds. A login for the page with the same username gets the new password (the old one goes to its history; not for re-prompting items); otherwise a new login named after the host, for the page's origin |
 | `generate {url}` | `{password}` | unlocked; a password to fill into a sign-up field |
 | `unlock` | `{}` | opens the app's unlock page; returns at once |
 

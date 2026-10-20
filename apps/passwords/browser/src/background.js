@@ -147,6 +147,34 @@ function fillNew(origin, password) {
   return n;
 }
 
+// Runs in the page: the login just typed into it, if it's still the page asked about.
+function readForm(origin) {
+  if (location.origin !== origin) return null;
+  const fields = [...document.querySelectorAll("input")].filter((el) => el.offsetParent !== null);
+  const passwordField = fields.find((el) => el.type === "password" && el.value);
+  if (!passwordField) return null;
+  const nearestFirst = fields.slice(0, fields.indexOf(passwordField)).reverse();
+  const userField =
+    nearestFirst.find((el) => /username|email/.test(el.autocomplete) && el.value) ??
+    nearestFirst.find((el) => ["text", "email", "tel"].includes(el.type) && el.value);
+  return { username: userField?.value ?? "", password: passwordField.value };
+}
+
+// Saves what's typed in the page's login form (the user asked, from the popup). The
+// password goes from the page to the app; the popup only hears what happened.
+async function save() {
+  const tab = await activeTab();
+  if (!tab) return { error: "NoUrl" };
+  const [result] = await api.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: readForm,
+    args: [new URL(tab.url).origin],
+  });
+  const form = result?.result;
+  if (!form?.password) return { error: "NoPassword" };
+  return request({ r: "save", url: tab.url, username: form.username, password: form.password });
+}
+
 async function fill(id) {
   const tab = await activeTab();
   if (!tab) return { error: "NoUrl" };
@@ -228,6 +256,8 @@ async function handle(message) {
     }
     case "unlock":
       return request({ r: "unlock" });
+    case "save":
+      return save();
     default:
       return { error: "unknown" };
   }

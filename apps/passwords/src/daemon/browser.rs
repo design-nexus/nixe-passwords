@@ -20,7 +20,9 @@ use serde_json::{Value, json};
 use url::Url;
 
 use super::peer::Scope;
-use super::vault::{Failure, Result, State, Vault, generated, need, parse_id, within};
+use nixe_passwords_core::edit::LoginDraft;
+
+use super::vault::{Failure, Result, State, Vault, generated, need, online, parse_id, within};
 
 const MAX_FRAME: usize = 64 * 1024;
 const PENDING_FOR: Duration = Duration::from_secs(120);
@@ -175,7 +177,7 @@ impl Vault {
         };
         active.last = n;
         let request: Value = serde_json::from_slice(plain.expose()).unwrap_or(Value::Null);
-        let answer = handle(st, p, browser, &request);
+        let answer = if request["r"] == "save" { save(st, p, &request).await } else { handle(st, p, browser, &request) };
         let Some(active) = st.browser.active.get(p) else { return json!({"t": "unknown"}) };
         match active.key.seal(format!("{p}|{n}|r").as_bytes(), answer.to_string().as_bytes()) {
             Ok(sealed) => json!({"t": "msg", "p": p, "n": n, "c": b64(&sealed)}),
@@ -329,6 +331,74 @@ fn handle(st: &mut State, pairing: &str, browser: &(i32, String), request: &Valu
             json!({})
         }
         _ => error(Code::Failed),
+    }
+}
+
+/// Saves the login the user just typed on a page (they asked, from the extension's
+/// popup): a new login for the site, or a new password for the site's login with the
+/// same username. Everything else on an existing login is kept, and the old password goes
+/// into its history.
+async fn save(st: &mut State, pairing: &str, request: &Value) -> Value {
+    let Some(url) = request["url"].as_str().and_then(|u| Url::parse(u).ok()).filter(|u| matches!(u.scheme(), "http" | "https"))
+    else {
+        return error(Code::NoUrl);
+    };
+    let username = request["username"].as_str().unwrap_or("").trim().to_string();
+    let password = request["password"].as_str().unwrap_or("").to_string();
+    if password.is_empty() || password.len() > 1024 || username.len() > 512 {
+        return error(Code::NoField);
+    }
+    if !st.browser.active.get_mut(pairing).is_some_and(|a| within(&mut a.fills, FILLS_PER_MINUTE)) {
+        return error(Code::RateLimited);
+    }
+    let Ok((server, refresh)) = online(st) else { return error(Code::Failed) };
+    let Some(session) = st.session.as_mut() else { return error(Code::Locked) };
+    let existing = session
+        .view
+        .matching(&url)
+        .into_iter()
+        .find(|e| e.username.as_ref().map_or("", |u| u.expose()) == username)
+        .map(|e| e.id);
+    st.edits += 1;
+    let result = match existing {
+        Some(id) if session.view.get(id).is_some_and(|e| e.reprompt) => {
+            return error(Code::Reprompt);
+        }
+        Some(id) => {
+            let entry = session.view.get(id).expect("found above");
+            let get = |field| reveal(&session.keys, &session.snapshot, id, field).ok();
+            let draft = LoginDraft {
+                name: Secret::new(entry.name.expose()),
+                username: entry.username.as_ref().map(|u| Secret::new(u.expose())),
+                password: Some(Secret::new(password)),
+                totp: get(Field::TotpSeed),
+                uris: entry.uris.iter().map(|u| Secret::new(u.expose())).collect(),
+                notes: get(Field::Notes),
+                folder: entry.folder,
+                favorite: entry.favorite,
+                reprompt: entry.reprompt,
+            };
+            session.update_login(&mut st.store, &server, &refresh, id, &draft).await.map(|()| ("updated", id))
+        }
+        None => {
+            let host = url.host_str().unwrap_or_default().trim_start_matches("www.").to_string();
+            let draft = LoginDraft {
+                name: Secret::new(host),
+                username: (!username.is_empty()).then(|| Secret::new(username.as_str())),
+                password: Some(Secret::new(password)),
+                totp: None,
+                uris: vec![Secret::new(url.origin().ascii_serialization())],
+                notes: None,
+                folder: None,
+                favorite: false,
+                reprompt: false,
+            };
+            session.create_login(&mut st.store, &server, &refresh, &draft).await.map(|id| ("created", id))
+        }
+    };
+    match result {
+        Ok((what, id)) => json!({"saved": what, "id": id, "username": username}),
+        Err(e) => json!({"error": Failure::from(e).kind.short()}),
     }
 }
 

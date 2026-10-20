@@ -49,7 +49,7 @@
 - [x] Bridge (`nixe-passwords-bridge`), host manifests (installer), pairing confirmation in the window and a Browsers settings group
 - [x] End-to-end test with the real bridge and a stand-in browser (`tests/daemon.rs`); WebCrypto test vector
 - [x] Extension (`browser/`): pairing, popup, fill (origin re-checked in the page), one-time codes, generate into sign-up forms, unlock, Ctrl+Shift+L
-- [ ] Extension: saving new logins (capture)
+- [x] Extension: saving the login typed into a page ("Save login": new, or a new password for the same username)
 - [x] Site context for `pw` (the reporting browser must be the focused window)
 - [ ] Tried in Firefox, Zen, Chromium, Brave (needs the extension loaded by hand; Firefox release needs signing)
 
