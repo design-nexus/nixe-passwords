@@ -149,3 +149,76 @@ fn every_field_of_every_kind() {
     assert!(!shown.iter().any(|f| f.name == "identity.ssn"));
     assert!(sub_field("card.nope").is_none() && sub_field("identity.ssn").is_some());
 }
+
+/// The fixture's personal login, copied under new ids with other passwords: a reused, a
+/// weak and an old one. The report finds each; the breach check, against a stand-in
+/// for Have I Been Pwned, finds the weak password and only it.
+#[tokio::test]
+async fn security_report() {
+    use nixe_passwords_core::audit::{self, Finding, StrengthCache};
+    let (keys, mut sync, _) = open();
+    let original = sync.ciphers.iter().find(|c| c.kind() == Kind::Login && c.organization_id.is_none()).unwrap().clone();
+    let with = |password: &str, changed: &str| {
+        let mut c = original.clone();
+        c.id = uuid::Uuid::new_v4();
+        let mut key = keys.item(None, c.key.as_deref()).unwrap();
+        let login = c.login.as_mut().unwrap();
+        login.password = Some(key.encrypt(password).unwrap());
+        login.extra.insert("passwordRevisionDate".into(), changed.into());
+        c
+    };
+    let fresh = "2026-10-01T00:00:00Z";
+    let original_password = reveal(&keys, &sync, original.id, Field::Password).unwrap();
+    let (reused, weak, old) = (
+        with(original_password.expose(), fresh),
+        with("password1", fresh),
+        with("Tr0ub4dor&3-plus-a-long-tail-of-words", "2024-01-01T00:00:00Z"),
+    );
+    sync.ciphers.extend([reused.clone(), weak.clone(), old.clone()]);
+    let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(20_746 * 86_400);
+    let mut cache = StrengthCache::new();
+    let found = audit::audit(&keys, &sync, now, &mut cache);
+    let get = |id| found.iter().find(|f: &&Finding| f.id == id).cloned();
+    assert_eq!(get(reused.id).map(|f| f.reused), Some(1));
+    assert_eq!(get(original.id).map(|f| f.reused), Some(1));
+    assert!(get(weak.id).is_some_and(|f| f.weak && f.reused == 0));
+    assert_eq!(get(old.id).and_then(|f| f.age_days), Some(1023));
+    // Scored once; a second report uses the cache.
+    assert!(cache.len() >= 4);
+    assert_eq!(audit::audit(&keys, &sync, now, &mut cache), found);
+
+    // A stand-in range API: it answers any prefix with padding plus, for the weak
+    // password's prefix, its own suffix.
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let hashes = audit::breach_hashes(&keys, &sync);
+    let target = hashes.iter().find(|(id, _)| *id == weak.id).unwrap().1.to_string();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let served = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = served.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut conn, _)) = listener.accept().await else { return };
+            let mut buf = vec![0u8; 4096];
+            let n = conn.read(&mut buf).await.unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            let prefix = request.split_whitespace().nth(1).unwrap().trim_start_matches("/range/").to_string();
+            let mut body = "0000000000000000000000000000000000A:0\r\n".to_string();
+            if target.starts_with(&prefix) {
+                body += &format!("{}:4242\r\n", &target[5..]);
+            }
+            log.lock().unwrap().push((prefix, request.to_lowercase().contains("add-padding: true")));
+            let reply = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+            conn.write_all(reply.as_bytes()).await.unwrap();
+        }
+    });
+    let found = audit::breaches(&base, &hashes).await.unwrap();
+    assert_eq!(found, vec![(weak.id, 4242)]);
+    let served = served.lock().unwrap();
+    assert!(served.iter().all(|(prefix, padded)| prefix.len() == 5 && *padded), "{served:?}");
+    // Each distinct prefix once: the reused password is asked about a single time.
+    let mut prefixes: Vec<&String> = served.iter().map(|(p, _)| p).collect();
+    prefixes.sort();
+    prefixes.dedup();
+    assert_eq!(prefixes.len(), served.len());
+}

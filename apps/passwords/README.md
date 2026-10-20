@@ -27,6 +27,9 @@ the vault syncs. Two-step login works with an authenticator app or an emailed co
   read-only items and hidden passwords stay that way.
 - Creates items in an organization's collections, changes their collections, and
   moves personal items into an organization.
+- A Security section lists logins with weak, reused or year-old passwords, worked out
+  on your computer. On request it checks them against Have I Been Pwned's breach data
+  without sending the passwords (only the first five characters of each hash).
 - Attachments: saves them to a file you choose, attaches files (up to 100 MB), and
   deletes them. Nothing decrypted goes to a temporary file.
 - Works offline from the local copy; edits need the server.

@@ -63,6 +63,18 @@ against that. What Nixe Passwords does:
 - An attacker with the user's access can read the clipboard after a copy. That is the
   clipboard's nature (below).
 
+### Where the daemon connects
+
+- **Your Vaultwarden server:** everything vault-related.
+- **Have I Been Pwned** (`api.pwnedpasswords.com`): only when you press "Check for
+  breaches…" in the Security section and confirm. It gets the first five hex
+  characters of each password's SHA-1 hash, one request per distinct prefix, with
+  padding on; the answer is matched here. Never automatic.
+
+The security report itself (weak, reused, old) is worked out in daemon memory. Its
+strength cache keeps only item ids, revisions and a weak/not-weak flag, and is
+dropped on lock.
+
 ### Browser extensions
 
 - **Pairing:** an extension pairs only after the user compares a code in the

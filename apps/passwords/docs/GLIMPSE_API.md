@@ -93,6 +93,8 @@ Item ids are not secret, but the list reveals usage, so it isn't written to disk
 | `UpdateItem` | `(s id, s draft) → ()` | The kind must match the item's. Like `UpdateLogin`, `organization` and `collections` move a personal item into an organization or change an organization item's collections; read-only items are refused with `Denied` |
 | `GenerateSshKey` | `() → s` | A new Ed25519 key: JSON `{private, public, fingerprint}` |
 | `ReadSshKey` | `(s private) → s` | JSON `{public, fingerprint}` for an OpenSSH private key; fails for a key with a passphrase |
+| `Report` | `() → s` | JSON `[{id, reused, weak, age_days}]`: logins with a password used by others, weak (zxcvbn below 3), or unchanged for over a year (`age_days` then set). Worked out in memory |
+| `CheckBreaches` | `() → s` | JSON `[{id, count}]`: logins whose password is in Have I Been Pwned's breach data. Sends only 5-character SHA-1 prefixes; the app asks the user first |
 | `Attachments` | `(s id) → s` | JSON `[{id, name, size}]`; `size` is the server's, of the encrypted file |
 | `SaveAttachment` | `(s id, s attachment, h file) → t written` | `file` is a handle to the file the user chose, opened by the app; the daemon decrypts into it. Items that ask for the master password need it first (`Reprompt`) |
 | `AddAttachment` | `(s id, s name, h file) → ()` | `file` is a handle to the file the user picked; at most 100 MB. Read-only items are refused |

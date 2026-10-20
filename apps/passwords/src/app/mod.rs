@@ -7,6 +7,7 @@ mod data;
 mod detail;
 mod editor;
 mod pairing;
+mod security;
 pub mod prefs;
 mod settings;
 #[cfg(debug_assertions)]

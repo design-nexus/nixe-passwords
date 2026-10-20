@@ -4,9 +4,10 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use nixe_passwords_core::api::{ApiError, MAX_ATTACHMENT, Server, TwoFactor, TwoFactorAnswer};
+use nixe_passwords_core::audit::{self, StrengthCache};
 use nixe_passwords_core::crypto::CryptoError;
 use nixe_passwords_core::edit::{ItemDraft, LoginDraft, Place};
 use nixe_passwords_core::generate;
@@ -106,6 +107,8 @@ pub(super) struct State {
     pub(super) edits: u64,
     /// Browser pairings and the active site (`browser.rs`).
     pub(super) browser: super::browser::Browser,
+    /// Password strength per item and revision, for the security report. No passwords.
+    pub(super) strength: StrengthCache,
 }
 
 pub struct Vault {
@@ -130,6 +133,7 @@ impl Vault {
                 confirmed: None,
                 edits: 0,
                 browser: Default::default(),
+                strength: StrengthCache::new(),
             }),
             clipboard: Arc::new(StdMutex::new(Clipboard::default())),
             notifier,
@@ -291,6 +295,7 @@ impl Vault {
             let mut st = self.state.lock().await;
             st.confirmed = None;
             st.browser.lock();
+            st.strength.clear();
             st.session.take()
         };
         if let Some(s) = session {
@@ -575,6 +580,37 @@ impl Vault {
         session.update_item(&mut st.store, &server, &refresh, id, &draft).await?;
         st.last_used = Instant::now();
         Ok(())
+    }
+
+    /// The security report as JSON `[{id, reused, weak, age_days}]`: logins with a
+    /// reused, weak or old password. Worked out here, in memory.
+    pub async fn report(&self, scope: Scope) -> Result<String> {
+        need(scope, Scope::App)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let session = st.session.as_ref().ok_or_else(locked)?;
+        let found = audit::audit(&session.keys, &session.snapshot, SystemTime::now(), &mut st.strength);
+        let list: Vec<_> =
+            found.iter().map(|f| json!({"id": f.id, "reused": f.reused, "weak": f.weak, "age_days": f.age_days})).collect();
+        Ok(serde_json::Value::Array(list).to_string())
+    }
+
+    /// Checks every login's password against Have I Been Pwned's breach data, when the
+    /// user asks: only the first five characters of each password's SHA-1 hash are sent.
+    /// JSON `[{id, count}]`, for the logins found.
+    pub async fn check_breaches(&self, scope: Scope) -> Result<String> {
+        need(scope, Scope::App)?;
+        let hashes = {
+            let st = self.state.lock().await;
+            let session = st.session.as_ref().ok_or_else(locked)?;
+            audit::breach_hashes(&session.keys, &session.snapshot)
+        };
+        // The vault lock is released while the lookups run.
+        let found = audit::breaches(audit::BREACH_API, &hashes)
+            .await
+            .map_err(|_| Failure::new(Code::Failed, "Have I Been Pwned couldn't be reached"))?;
+        let list: Vec<_> = found.iter().map(|(id, count)| json!({"id": id, "count": count})).collect();
+        Ok(serde_json::Value::Array(list).to_string())
     }
 
     /// An item's attachments as JSON `[{id, name, size}]`.

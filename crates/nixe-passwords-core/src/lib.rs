@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod attach;
+pub mod audit;
 pub mod crypto;
 pub mod edit;
 pub mod generate;

@@ -190,6 +190,16 @@ impl Service {
         Ok(self.vault.update_item(self.scope, &id, &draft).await?)
     }
 
+    /// Logins with a reused, weak or old password, as JSON.
+    async fn report(&self) -> Result<String, Error> {
+        Ok(self.vault.report(self.scope).await?)
+    }
+
+    /// Breach counts from Have I Been Pwned (k-anonymity: hash prefixes only), as JSON.
+    async fn check_breaches(&self) -> Result<String, Error> {
+        Ok(self.vault.check_breaches(self.scope).await?)
+    }
+
     /// An item's attachments as JSON `[{id, name, size}]`.
     async fn attachments(&self, id: String) -> Result<String, Error> {
         Ok(self.vault.attachments(self.scope, &id).await?)

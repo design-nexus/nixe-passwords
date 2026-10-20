@@ -11,7 +11,7 @@ use nixe_passwords_proto::state;
 use nixe_ui::{chrome, widgets as w};
 
 use super::data::{self, Listing};
-use super::{account, client, detail, editor, prefs, settings, theme};
+use super::{account, client, detail, editor, prefs, security, settings, theme};
 
 pub type Ui = Rc<State>;
 
@@ -46,6 +46,9 @@ pub struct State {
     pub editor: RefCell<Option<gtk::Window>>,
     /// Bumped whenever details are rebuilt, so timers from older ones stop.
     pub detail_serial: Cell<u64>,
+    /// The security report (`security.rs`), and its part of the toolbar.
+    pub security: RefCell<security::Report>,
+    security_bar: gtk::Box,
 }
 
 thread_local! { static UI: RefCell<Option<Ui>> = const { RefCell::new(None) }; }
@@ -125,6 +128,9 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     new_content.append(&gtk::Label::new(Some("New item")));
     new.set_child(Some(&new_content));
     toolbar.append(&new);
+    let security_bar = w::hbox(0);
+    security_bar.set_hexpand(true);
+    toolbar.append(&security_bar);
     let panes = w::hbox(0);
     panes.set_vexpand(true);
     vault.append(&panes);
@@ -222,7 +228,10 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
         rebuilding: Cell::new(false),
         editor: RefCell::new(None),
         detail_serial: Cell::new(0),
+        security: RefCell::new(security::Report::default()),
+        security_bar,
     });
+    ui.security_bar.append(&security::toolbar(&ui));
     UI.with(|u| *u.borrow_mut() = Some(ui.clone()));
 
     let u = ui.clone();
@@ -370,6 +379,7 @@ pub fn set_state(ui: &Ui, st: &str) {
     } else {
         // Nothing of the vault stays in the window once it's locked.
         *ui.listing.borrow_mut() = Listing::default();
+        *ui.security.borrow_mut() = security::Report::default();
         *ui.selected.borrow_mut() = None;
         clear(&ui.details);
         clear(&ui.list);
@@ -405,6 +415,7 @@ pub fn reload(ui: &Ui) {
                 refresh_list(&ui);
                 nav(&ui);
                 detail::show(&ui);
+                security::refresh(&ui);
             }
             Err(e) if e.is(nixe_passwords_proto::Error::Locked) => set_state(&ui, state::LOCKED),
             Err(e) => toast(&ui, &e.to_string()),
@@ -452,7 +463,9 @@ pub fn navigate(ui: &Ui, section: &str) {
 pub fn visible(ui: &Ui) -> Vec<data::Entry> {
     let section = ui.section.borrow().clone();
     let query = ui.search.text().to_string();
-    ui.listing.borrow().entries.iter().filter(|e| e.in_section(&section) && e.matches(&query)).cloned().collect()
+    let report = ui.security.borrow();
+    let shown = |e: &data::Entry| if section == "security" { report.flags(e) } else { e.in_section(&section) };
+    ui.listing.borrow().entries.iter().filter(|e| shown(e) && e.matches(&query)).cloned().collect()
 }
 
 pub fn refresh_list(ui: &Ui) {
@@ -479,7 +492,8 @@ pub fn refresh_list(ui: &Ui) {
         name.set_xalign(0.0);
         name.set_ellipsize(gtk::pango::EllipsizeMode::End);
         text.append(&name);
-        let sub = gtk::Label::new(Some(&e.subtitle()));
+        let subtitle = if *ui.section.borrow() == "security" { ui.security.borrow().describe(e) } else { e.subtitle() };
+        let sub = gtk::Label::new(Some(&subtitle));
         sub.add_css_class("dim");
         sub.add_css_class("item-row-description");
         sub.set_xalign(0.0);
@@ -512,6 +526,8 @@ pub fn refresh_list(ui: &Ui) {
             "No matching items."
         } else if *ui.section.borrow() == "trash" {
             "The trash is empty."
+        } else if *ui.section.borrow() == "security" {
+            "No weak, reused or old passwords."
         } else {
             "No items here yet."
         };
@@ -562,7 +578,7 @@ fn nav_group(ui: &Ui, title: &str, first: bool) {
 /// A sidebar entry: section id, name, icon, item count.
 type NavItem = (String, String, String, usize);
 
-fn nav(ui: &Ui) {
+pub fn nav(ui: &Ui) {
     clear(&ui.nav);
     if *ui.state.borrow() != state::UNLOCKED {
         return;
@@ -621,7 +637,14 @@ fn nav(ui: &Ui) {
         groups.push(("Collections", cols));
     }
     let trashed = listing.entries.iter().filter(|e| e.deleted).count();
-    groups.push(("Other", vec![("trash".into(), "Trash".into(), "user-trash-symbolic".into(), trashed)]));
+    let flagged = listing.entries.iter().filter(|e| ui.security.borrow().flags(e)).count();
+    groups.push((
+        "Other",
+        vec![
+            ("security".into(), "Security".into(), "security-high-symbolic".into(), flagged),
+            ("trash".into(), "Trash".into(), "user-trash-symbolic".into(), trashed),
+        ],
+    ));
     drop(listing);
     let current = ui.section.borrow().clone();
     let mut title = None;
@@ -662,6 +685,7 @@ pub fn layout(ui: &Ui) {
     compact_sidebar(ui);
     let empty = visible(ui).is_empty();
     ui.toolbar.set_visible(*ui.section.borrow() != "trash");
+    ui.security_bar.set_visible(*ui.section.borrow() == "security");
     ui.list_scroll.set_hexpand(narrow || empty);
     ui.list_scroll.set_visible(empty || !narrow || !ui.showing_detail.get());
     ui.detail_scroll.set_visible(!empty && (!narrow || ui.showing_detail.get()));
