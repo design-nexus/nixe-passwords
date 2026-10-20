@@ -121,3 +121,31 @@ fn matching_pages() {
     assert!(view.matching(&page("https://github.io/")).is_empty());
     assert!(view.matching(&page("https://example.com/")).is_empty());
 }
+
+#[test]
+fn every_field_of_every_kind() {
+    use nixe_passwords_core::vault::{fields, sub_field};
+    let (keys, sync, bw) = open();
+    let view = View::build(&keys, &sync);
+    let card = view.entries.iter().find(|e| e.kind == Kind::Card).unwrap();
+    let shown = fields(&keys, &sync, card.id).unwrap();
+    let get = |name: &str| shown.iter().find(|f| f.name == name).unwrap();
+    assert_eq!(get("card.cardholderName").value.as_ref().unwrap().expose(), "Octo Cat");
+    assert_eq!(get("card.brand").value.as_ref().unwrap().expose(), "Visa");
+    // Secret fields are listed but withheld until asked for.
+    assert!(get("card.number").secret && get("card.number").value.is_none());
+    let b = bw.iter().find(|b| b["id"] == card.id.to_string()).unwrap();
+    assert_eq!(reveal(&keys, &sync, card.id, sub_field("card.number").unwrap()).unwrap().expose(), b["card"]["number"]);
+    assert_eq!(reveal(&keys, &sync, card.id, sub_field("card.code").unwrap()).unwrap().expose(), b["card"]["code"]);
+    // Custom fields: "recovery" was saved as hidden (type 1).
+    let custom = shown.iter().find(|f| f.name == "custom:0").unwrap();
+    assert_eq!((custom.label.as_str(), custom.secret, custom.value.is_none()), ("recovery", true, true));
+
+    let ident = view.entries.iter().find(|e| e.kind == Kind::Identity).unwrap();
+    let shown = fields(&keys, &sync, ident.id).unwrap();
+    assert!(shown.iter().any(|f| f.name == "identity.firstName" && f.value.as_ref().unwrap().expose() == "Octo"));
+    assert!(shown.iter().any(|f| f.name == "identity.email" && f.value.as_ref().unwrap().expose() == "octo@example.com"));
+    // Only fields the item has are listed.
+    assert!(!shown.iter().any(|f| f.name == "identity.ssn"));
+    assert!(sub_field("card.nope").is_none() && sub_field("identity.ssn").is_some());
+}

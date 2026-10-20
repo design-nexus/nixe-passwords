@@ -139,12 +139,12 @@ pub fn show(ui: &Ui) {
                 rows.append(&w::row(uri, "", Some(actions.upcast_ref())));
             }
         }
-    } else {
-        ui.details.append(&label(
-            &format!("{} details show in a later version; the notes are below.", data::kind_name(&e.kind)),
-            "dim",
-        ));
     }
+    // A card's, identity's or SSH key's fields, and custom fields, arrive from the daemon;
+    // this keeps their place above the notes.
+    let more = w::vbox(12);
+    ui.details.append(&more);
+    show_fields(ui, &e, &more);
     let rows = group(ui, "Notes");
     rows.append(&secret_row(ui, &e, "notes", "Notes", ""));
 }
@@ -162,6 +162,48 @@ fn describe(ui: &Ui, e: &Entry) -> String {
         parts.push(c.name.clone());
     }
     parts.join(" · ")
+}
+
+#[derive(serde::Deserialize)]
+struct FieldRow {
+    name: String,
+    label: String,
+    value: Option<String>,
+    secret: bool,
+}
+
+fn show_fields(ui: &Ui, e: &Entry, into: &gtk::Box) {
+    let (ui, e, into) = (ui.clone(), e.clone(), into.clone());
+    let serial = ui.detail_serial.get();
+    glib::spawn_future_local(async move {
+        let Ok(json) = client::text("Fields", Some((e.id.as_str(),).to_variant())).await else { return };
+        let Ok(list) = serde_json::from_str::<Vec<FieldRow>>(&json) else { return };
+        if ui.detail_serial.get() != serial {
+            return;
+        }
+        let (own, custom): (Vec<_>, Vec<_>) = list.into_iter().partition(|f| !f.name.starts_with("custom:"));
+        for (title, fields) in [(data::kind_name(&e.kind), own), ("Custom fields", custom)] {
+            if fields.is_empty() {
+                continue;
+            }
+            into.append(&label(&title.to_uppercase(), "group-title"));
+            let rows = w::vbox(0);
+            rows.add_css_class("group-list");
+            into.append(&rows);
+            for f in fields {
+                if f.secret {
+                    rows.append(&secret_row(&ui, &e, &f.name, &f.label, &format!("Copy {}", f.label.to_lowercase())));
+                } else {
+                    let value = f.value.unwrap_or_default();
+                    let button = w::bar_button("edit-copy-symbolic", &format!("Copy {}", f.label.to_lowercase()));
+                    let (u, id, name) = (ui.clone(), e.id.clone(), f.name.clone());
+                    button.connect_clicked(move |_| copy(&u, &id, &name));
+                    let row = w::row(&value, &glib::markup_escape_text(&f.label), Some(button.upcast_ref()));
+                    rows.append(&row);
+                }
+            }
+        }
+    });
 }
 
 fn group(ui: &Ui, title: &str) -> gtk::Box {
@@ -303,7 +345,8 @@ pub fn copy(ui: &Ui, id: &str, field: &str) {
                 let what = match field.as_str() {
                     "username" => "Username",
                     "password" => "Password",
-                    _ => "One-time code",
+                    "totp" => "One-time code",
+                    _ => "Value",
                 };
                 let when = if seconds > 0 { format!(" · clears in {seconds} s") } else { String::new() };
                 ui::toast(&ui, &format!("{what} copied{when}"));

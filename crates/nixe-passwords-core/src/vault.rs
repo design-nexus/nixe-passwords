@@ -64,6 +64,118 @@ pub enum Field {
     Notes,
     /// The value of the item's n-th custom field.
     Custom(usize),
+    /// A field of a card, identity or SSH key (`card.number`, …; see `sub_field`).
+    Sub(&'static Spec),
+}
+
+/// A field of a card, identity or SSH key: where it is in the item, its name in the
+/// interface, what to call it, and whether it stays hidden until asked for.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Spec {
+    pub section: &'static str,
+    pub key: &'static str,
+    pub name: &'static str,
+    pub label: &'static str,
+    pub secret: bool,
+}
+
+const fn spec(section: &'static str, key: &'static str, name: &'static str, label: &'static str, secret: bool) -> Spec {
+    Spec { section, key, name, label, secret }
+}
+
+pub const CARD: &[Spec] = &[
+    spec("card", "cardholderName", "card.cardholderName", "Cardholder", false),
+    spec("card", "brand", "card.brand", "Brand", false),
+    spec("card", "number", "card.number", "Number", true),
+    spec("card", "expMonth", "card.expMonth", "Expiry month", false),
+    spec("card", "expYear", "card.expYear", "Expiry year", false),
+    spec("card", "code", "card.code", "Security code", true),
+];
+
+pub const IDENTITY: &[Spec] = &[
+    spec("identity", "title", "identity.title", "Title", false),
+    spec("identity", "firstName", "identity.firstName", "First name", false),
+    spec("identity", "middleName", "identity.middleName", "Middle name", false),
+    spec("identity", "lastName", "identity.lastName", "Last name", false),
+    spec("identity", "username", "identity.username", "Username", false),
+    spec("identity", "company", "identity.company", "Company", false),
+    spec("identity", "email", "identity.email", "Email", false),
+    spec("identity", "phone", "identity.phone", "Phone", false),
+    spec("identity", "address1", "identity.address1", "Address", false),
+    spec("identity", "address2", "identity.address2", "Address 2", false),
+    spec("identity", "address3", "identity.address3", "Address 3", false),
+    spec("identity", "city", "identity.city", "City", false),
+    spec("identity", "state", "identity.state", "State or province", false),
+    spec("identity", "postalCode", "identity.postalCode", "Postal code", false),
+    spec("identity", "country", "identity.country", "Country", false),
+    spec("identity", "ssn", "identity.ssn", "Social security number", true),
+    spec("identity", "passportNumber", "identity.passportNumber", "Passport number", true),
+    spec("identity", "licenseNumber", "identity.licenseNumber", "License number", true),
+];
+
+pub const SSH_KEY: &[Spec] = &[
+    spec("sshKey", "publicKey", "ssh.publicKey", "Public key", false),
+    spec("sshKey", "keyFingerprint", "ssh.keyFingerprint", "Fingerprint", false),
+    spec("sshKey", "privateKey", "ssh.privateKey", "Private key", true),
+];
+
+/// The fields of a kind of item, in the order they're shown.
+pub fn specs(kind: Kind) -> &'static [Spec] {
+    match kind {
+        Kind::Card => CARD,
+        Kind::Identity => IDENTITY,
+        Kind::SshKey => SSH_KEY,
+        _ => &[],
+    }
+}
+
+/// `card.number`, `identity.ssn`, `ssh.privateKey`, … as a field; `None` for other names.
+pub fn sub_field(name: &str) -> Option<Field> {
+    CARD.iter().chain(IDENTITY).chain(SSH_KEY).find(|s| s.name == name).map(Field::Sub)
+}
+
+/// One field as listed: its interface name, label, and value. A secret field's value is
+/// withheld (`None`) even when present; ask for it with `reveal`.
+pub struct Shown {
+    pub name: String,
+    pub label: String,
+    pub value: Option<Secret>,
+    pub secret: bool,
+}
+
+fn section<'a>(c: &'a Cipher, name: &str) -> Option<&'a serde_json::Value> {
+    match name {
+        "card" => c.card.as_ref(),
+        "identity" => c.identity.as_ref(),
+        "sshKey" => c.ssh_key.as_ref(),
+        _ => None,
+    }
+}
+
+/// The fields an item has, besides a login's username, password, code and addresses:
+/// its kind's fields and its custom fields. Secret ones come without their values.
+pub fn fields(keys: &Keys, sync: &Sync, id: Uuid) -> Result<Vec<Shown>, RevealError> {
+    let c = sync.ciphers.iter().find(|c| c.id == id).ok_or(RevealError::NotFound)?;
+    let mut key = keys.item(c.organization_id, c.key.as_deref()).map_err(RevealError::Crypto)?;
+    let mut out = Vec::new();
+    for spec in specs(c.kind()) {
+        let stored = section(c, spec.section).and_then(|v| v[spec.key].as_str()).filter(|v| !v.is_empty());
+        let Some(stored) = stored else { continue };
+        let value = if spec.secret { None } else { Some(key.decrypt(stored).map_err(RevealError::Crypto)?) };
+        out.push(Shown { name: spec.name.into(), label: spec.label.into(), value, secret: spec.secret });
+    }
+    for (i, f) in c.fields.iter().flatten().enumerate() {
+        // Linked fields (3) point at another field and hold no value of their own.
+        if f.kind == 3 {
+            continue;
+        }
+        let label = key.decrypt_opt(f.name.as_deref()).map_err(RevealError::Crypto)?;
+        let label = label.map(|l| l.expose().to_string()).filter(|l| !l.is_empty()).unwrap_or_else(|| format!("Field {}", i + 1));
+        let secret = f.kind == 1;
+        let value = if secret { None } else { key.decrypt_opt(f.value.as_deref()).map_err(RevealError::Crypto)? };
+        out.push(Shown { name: format!("custom:{i}"), label, value, secret });
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,6 +310,7 @@ pub fn reveal(keys: &Keys, sync: &Sync, id: Uuid, field: Field) -> Result<Secret
         Field::Totp | Field::TotpSeed => login.and_then(|l| l.totp.as_deref()),
         Field::Notes => c.notes.as_deref(),
         Field::Custom(n) => c.fields.as_ref().and_then(|f| f.get(n)).and_then(|f| f.value.as_deref()),
+        Field::Sub(spec) => section(c, spec.section).and_then(|v| v[spec.key].as_str()),
     };
     let plain = key.decrypt_opt(value).map_err(RevealError::Crypto)?.ok_or(RevealError::Empty)?;
     if field == Field::Totp {

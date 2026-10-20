@@ -151,6 +151,12 @@ impl Service {
         Ok(self.vault.reveal(self.scope, &id, &field).await?.expose().to_string())
     }
 
+    /// An item's other fields (card, identity, SSH key, custom) as JSON; secret values
+    /// are left out.
+    async fn fields(&self, id: String) -> Result<String, Error> {
+        Ok(self.vault.fields(self.scope, &id).await?)
+    }
+
     /// A password for the editor, from rules as JSON (`{"kind":"password",…}`).
     async fn generate_password(&self, rules: String) -> Result<String, Error> {
         Ok(self.vault.generate_password(self.scope, &rules).await?.expose().to_string())

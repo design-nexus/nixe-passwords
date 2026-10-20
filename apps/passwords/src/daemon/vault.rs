@@ -190,10 +190,12 @@ impl Vault {
 
     /// Puts one field on the clipboard; returns the seconds until it's cleared.
     pub async fn copy(self: &Arc<Self>, scope: Scope, id: &str, field_name: &str) -> Result<u32> {
-        let field = match field_name {
-            field::USERNAME => Field::Username,
-            field::PASSWORD => Field::Password,
-            field::TOTP => Field::Totp,
+        let field = match (field_name, scope) {
+            (field::USERNAME, _) => Field::Username,
+            (field::PASSWORD, _) => Field::Password,
+            (field::TOTP, _) => Field::Totp,
+            // The window may copy any field; Glimpse only those three.
+            (other, Scope::App) => any_field(other)?,
             _ => return Err(Failure::new(Code::NoField, "unknown field")),
         };
         let id = parse_id(id)?;
@@ -214,7 +216,9 @@ impl Vault {
             let label = match field {
                 Field::Username => "Username",
                 Field::Password => "Password",
-                _ => "One-time code",
+                Field::Totp => "One-time code",
+                Field::Sub(spec) => spec.label,
+                _ => "Field",
             };
             (value, settings, label)
         };
@@ -466,17 +470,7 @@ impl Vault {
     /// One field's plaintext, for the window's reveal and editor.
     pub async fn reveal(&self, scope: Scope, id: &str, field_name: &str) -> Result<Secret> {
         need(scope, Scope::App)?;
-        let field = match field_name {
-            field::USERNAME => Field::Username,
-            field::PASSWORD => Field::Password,
-            field::TOTP => Field::Totp,
-            "totp_seed" => Field::TotpSeed,
-            "notes" => Field::Notes,
-            other => match other.strip_prefix("custom:").and_then(|n| n.parse().ok()) {
-                Some(n) => Field::Custom(n),
-                None => return Err(Failure::new(Code::NoField, "unknown field")),
-            },
-        };
+        let field = any_field(field_name)?;
         let id = parse_id(id)?;
         let mut st = self.state.lock().await;
         if !within(&mut st.app_reveals, APP_REVEALS_PER_MINUTE) {
@@ -486,6 +480,21 @@ impl Vault {
         reprompt_check(&st, scope, id, field)?;
         let session = st.session.as_ref().ok_or_else(locked)?;
         Ok(reveal(&session.keys, &session.snapshot, id, field)?)
+    }
+
+    /// An item's other fields as JSON: `[{name, label, value, secret}]`, secret values
+    /// left out (`Reveal` them one at a time).
+    pub async fn fields(&self, scope: Scope, id: &str) -> Result<String> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let st = self.state.lock().await;
+        let session = st.session.as_ref().ok_or_else(locked)?;
+        let shown = nixe_passwords_core::vault::fields(&session.keys, &session.snapshot, id)?;
+        let list: Vec<_> = shown
+            .iter()
+            .map(|f| json!({"name": f.name, "label": f.label, "value": f.value.as_ref().map(|v| v.expose()), "secret": f.secret}))
+            .collect();
+        Ok(serde_json::Value::Array(list).to_string())
     }
 
     pub async fn generate_password(&self, scope: Scope, rules: &str) -> Result<Secret> {
@@ -537,6 +546,23 @@ impl Vault {
         st.last_used = Instant::now();
         Ok(())
     }
+}
+
+/// A field by its interface name: `username`, `password`, `totp`, `totp_seed`, `notes`,
+/// `custom:N`, or a card, identity or SSH key field (`card.number`, …).
+fn any_field(name: &str) -> Result<Field> {
+    let field = match name {
+        field::USERNAME => Field::Username,
+        field::PASSWORD => Field::Password,
+        field::TOTP => Field::Totp,
+        "totp_seed" => Field::TotpSeed,
+        "notes" => Field::Notes,
+        other => match other.strip_prefix("custom:").and_then(|n| n.parse().ok()) {
+            Some(n) => Field::Custom(n),
+            None => nixe_passwords_core::vault::sub_field(other).ok_or_else(|| Failure::new(Code::NoField, "unknown field"))?,
+        },
+    };
+    Ok(field)
 }
 
 pub(super) fn need(scope: Scope, wanted: Scope) -> Result<()> {

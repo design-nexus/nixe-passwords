@@ -55,3 +55,5 @@
 
 ## Phase 4 / 5
 See PLAN.md.
+- [x] Item view: card, identity and SSH key fields and custom fields, with copy and reveal (`Fields`; secret values only through `Reveal`)
+- [ ] Editing notes, cards, identities and SSH keys
