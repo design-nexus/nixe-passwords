@@ -9,6 +9,7 @@ pub mod matching;
 pub mod model;
 pub mod secret;
 pub mod session;
+pub mod ssh;
 pub mod store;
 pub mod totp;
 pub mod vault;

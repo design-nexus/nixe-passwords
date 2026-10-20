@@ -13,6 +13,7 @@ use crate::api::{self, ApiError, Device, Login, Server, Tokens, TwoFactor, TwoFa
 use crate::crypto::{CryptoError, Kdf, Keys, MasterKey};
 use crate::model::Sync;
 use crate::secret::Secret;
+use crate::ssh::SshError;
 use crate::store::{Account, Store, StoreError};
 use crate::vault::View;
 
@@ -29,6 +30,8 @@ pub enum SessionError {
     /// The account's keys changed elsewhere (a new master password or key rotation):
     /// unlock again.
     KeysChanged,
+    /// An SSH key item's private key can't be used.
+    BadSshKey(SshError),
 }
 
 impl fmt::Display for SessionError {
@@ -42,6 +45,7 @@ impl fmt::Display for SessionError {
             }
             Self::SignedOut => f.write_str("not signed in"),
             Self::KeysChanged => f.write_str("the account's keys changed; unlock again"),
+            Self::BadSshKey(e) => e.fmt(f),
         }
     }
 }

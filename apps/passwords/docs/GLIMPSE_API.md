@@ -89,8 +89,10 @@ Item ids are not secret, but the list reveals usage, so it isn't written to disk
 | `GeneratePassword` | `(s rules) → s` | `{"kind":"password",…}` or `{"kind":"passphrase",…}` |
 | `CreateLogin` | `(s draft) → s id` | Draft JSON: name, username, password, totp, uris, notes, folder, favorite, reprompt |
 | `UpdateLogin` | `(s id, s draft) → ()` | |
-| `CreateItem` | `(s draft) → s id` | A note, card or identity. Draft JSON: kind (`note`, `card`, `identity`), name, fields (`{"card.number": …}`; one left out is cleared), notes, folder, favorite, reprompt |
+| `CreateItem` | `(s draft) → s id` | A note, card, identity or SSH key. Draft JSON: kind (`note`, `card`, `identity`, `ssh`), name, fields (`{"card.number": …}`; one left out is cleared), notes, folder, favorite, reprompt. An SSH key needs only `ssh.privateKey` (OpenSSH, no passphrase); its public key and fingerprint are worked out from it |
 | `UpdateItem` | `(s id, s draft) → ()` | The kind must match the item's |
+| `GenerateSshKey` | `() → s` | A new Ed25519 key: JSON `{private, public, fingerprint}` |
+| `ReadSshKey` | `(s private) → s` | JSON `{public, fingerprint}` for an OpenSSH private key; fails for a key with a passphrase |
 | `Trash`, `Restore` | `(s id) → ()` | |
 
 ## Glimpse behaviour

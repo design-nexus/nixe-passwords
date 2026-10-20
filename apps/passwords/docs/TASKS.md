@@ -58,4 +58,5 @@
 See PLAN.md.
 - [x] Item view: card, identity and SSH key fields and custom fields, with copy and reveal (`Fields`; secret values only through `Reveal`)
 - [x] Editing notes, cards and identities (`CreateItem`, `UpdateItem`; fields the app doesn't know are kept)
-- [ ] Editing SSH keys
+- [x] Editing SSH keys: generate (Ed25519) or import an OpenSSH private key; the public key and fingerprint always come from it
+- [ ] SSH keys with a passphrase (imports ask for a copy without one for now)

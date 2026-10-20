@@ -16,6 +16,7 @@ use crate::crypto::{ItemKey, uri_checksum};
 use crate::model::{Cipher, Kind, Login, LoginUri};
 use crate::secret::Secret;
 use crate::session::{Result, Session, SessionError};
+use crate::ssh;
 use crate::store::Store;
 use crate::vault::specs;
 
@@ -37,8 +38,10 @@ pub struct LoginDraft {
     pub reprompt: bool,
 }
 
-/// What the user typed for a note, card or identity. `fields` are the kind's own fields
-/// by name (`card.number`, …; see `vault::specs`); one left out or empty is cleared.
+/// What the user typed for a note, card, identity or SSH key. `fields` are the kind's own
+/// fields by name (`card.number`, …; see `vault::specs`); one left out or empty is
+/// cleared. An SSH key needs only `ssh.privateKey`: its public key and fingerprint are
+/// worked out from it.
 pub struct ItemDraft {
     pub kind: Kind,
     pub name: Secret,
@@ -51,7 +54,7 @@ pub struct ItemDraft {
 
 /// The kinds `create_item` and `update_item` handle (logins have their own draft).
 pub fn editable(kind: Kind) -> bool {
-    matches!(kind, Kind::Note | Kind::Card | Kind::Identity)
+    matches!(kind, Kind::Note | Kind::Card | Kind::Identity | Kind::SshKey)
 }
 
 impl Session {
@@ -123,7 +126,7 @@ impl Session {
         self.send_update(store, server, &access, &old, &new).await
     }
 
-    /// Creates a personal note, card or identity and returns its id.
+    /// Creates a personal note, card, identity or SSH key and returns its id.
     pub async fn create_item(&mut self, store: &mut Store, server: &Server, refresh: &Secret, draft: &ItemDraft) -> Result<Uuid> {
         if !editable(draft.kind) {
             return Err(SessionError::Api(ApiError::Protocol));
@@ -153,8 +156,8 @@ impl Session {
         Ok(id)
     }
 
-    /// Saves a changed note, card or identity. Its custom fields, attachments and any
-    /// field this client doesn't know are sent back as they were.
+    /// Saves a changed note, card, identity or SSH key. Its custom fields, attachments and
+    /// any field this client doesn't know are sent back as they were.
     pub async fn update_item(
         &mut self,
         store: &mut Store,
@@ -179,6 +182,7 @@ impl Session {
             let section = match draft.kind {
                 Kind::Note => &mut new.secure_note,
                 Kind::Card => &mut new.card,
+                Kind::SshKey => &mut new.ssh_key,
                 _ => &mut new.identity,
             };
             *section = Some(fill_section(&mut key, section.as_ref(), draft)?);
@@ -251,13 +255,13 @@ fn section_name(kind: Kind) -> &'static str {
     match kind {
         Kind::Note => "secureNote",
         Kind::Card => "card",
+        Kind::SshKey => "sshKey",
         _ => "identity",
     }
 }
 
-/// A note's, card's or identity's own part of a request: each of the kind's fields from
-/// the draft, encrypted, or null when empty. Keys this client doesn't know stay as they
-/// were.
+/// An item's own part of a request: each of the kind's fields from the draft, encrypted,
+/// or null when empty. Keys this client doesn't know stay as they were.
 fn fill_section(key: &mut ItemKey, old: Option<&Value>, draft: &ItemDraft) -> Result<Value> {
     let mut section = match old {
         Some(Value::Object(map)) => map.clone(),
@@ -266,11 +270,30 @@ fn fill_section(key: &mut ItemKey, old: Option<&Value>, draft: &ItemDraft) -> Re
     if draft.kind == Kind::Note {
         section.entry("type").or_insert(json!(0));
     }
+    let derived = match draft.kind {
+        Kind::SshKey => Some(ssh_fields(draft)?),
+        _ => None,
+    };
     for spec in specs(draft.kind) {
-        let value = draft.fields.iter().find(|(name, _)| name == spec.name).map(|(_, v)| v);
+        let given = draft.fields.iter().find(|(name, _)| name == spec.name).map(|(_, v)| v);
+        let value = match &derived {
+            Some(fields) => fields.iter().find(|(name, _)| *name == spec.name).map(|(_, v)| v),
+            None => given,
+        };
         section.insert(spec.key.into(), encrypt_opt(key, value)?.map_or(Value::Null, Value::String));
     }
     Ok(Value::Object(section))
+}
+
+/// An SSH key draft's three fields, from its private key.
+fn ssh_fields(draft: &ItemDraft) -> Result<Vec<(&'static str, Secret)>> {
+    let private = draft.fields.iter().find(|(name, _)| name == "ssh.privateKey").map(|(_, v)| v.expose());
+    let key = ssh::read(private.unwrap_or_default()).map_err(SessionError::BadSshKey)?;
+    Ok(vec![
+        ("ssh.privateKey", key.private),
+        ("ssh.publicKey", Secret::new(key.public)),
+        ("ssh.keyFingerprint", Secret::new(key.fingerprint)),
+    ])
 }
 
 /// The login part of a request. A web address that was already there keeps its match

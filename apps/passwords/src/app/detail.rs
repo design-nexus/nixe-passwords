@@ -200,11 +200,24 @@ fn show_fields(ui: &Ui, e: &Entry, into: &gtk::Box) {
                     let (u, id, name) = (ui.clone(), e.id.clone(), f.name.clone());
                     button.connect_clicked(move |_| copy(&u, &id, &name));
                     let row = w::row(&value, &glib::markup_escape_text(&f.label), Some(button.upcast_ref()));
+                    wrap_anywhere(&row);
                     rows.append(&row);
                 }
             }
         }
     });
+}
+
+/// Lets a row's value break anywhere, without added hyphens: a public key or fingerprint
+/// is one long word and would otherwise widen the window.
+fn wrap_anywhere(row: &gtk::Box) {
+    let value = row.first_child().and_then(|text| text.first_child()).and_downcast::<gtk::Label>();
+    if let Some(value) = value {
+        let unhyphenated = gtk::pango::AttrList::new();
+        unhyphenated.insert(gtk::pango::AttrInt::new_insert_hyphens(false));
+        value.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        value.set_attributes(Some(&unhyphenated));
+    }
 }
 
 fn group(ui: &Ui, title: &str) -> gtk::Box {

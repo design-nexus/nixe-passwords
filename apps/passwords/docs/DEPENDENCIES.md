@@ -58,6 +58,7 @@ build time and binary size, and that `cargo deny` accepts every licence.
 | `psl` 2 | MIT/Apache | Base domain for URI matching | no |
 | `url` 2 | MIT/Apache | URI parsing | transitive |
 | `wl-clipboard-rs` 0.9 | MIT/Apache | Clipboard owner over data-control | no |
+| `ssh-key` =0.7.0-rc.11 (`ed25519`) | MIT/Apache | SSH key items: reading OpenSSH private keys, generating Ed25519 keys, public keys and `SHA256:` fingerprints, as the official clients store them. Bitwarden's own `bitwarden-ssh` isn't published. The release candidate is pinned because it shares the RustCrypto versions bitwarden-crypto already pulls in (`rsa 0.10` rc, `ed25519-dalek 3`, `rand_core 0.10`, `sha2 0.11`); the stable 0.6 line would add a second, older copy of each | no (added 2026-10-20) |
 | `libc` | MIT/Apache | `SO_PEERCRED`, `SO_PEERPIDFD`, `prctl`, `flock` | yes |
 | `rand` 0.10 | MIT/Apache | The password generator (thread CSPRNG); bitwarden-generators needs a full bitwarden-core client, so it isn't used | via bitwarden-crypto |
 | `x25519-dalek`, `hkdf`, `aes-gcm` | BSD-3/MIT/Apache | Native Messaging pairing (Phase 3) | partly |

@@ -19,13 +19,15 @@ the vault syncs. Two-step login works with an authenticator app or an emailed co
 - Shows a login's username, password (hidden until shown, hidden again after 30 s),
   current one-time code and web addresses, and every field of cards, identities, SSH
   keys and custom fields, with secret ones hidden until shown.
-- Creates and edits logins, secure notes, cards and identities, with a password and
-  passphrase generator. An edit made in another app in the meantime is caught instead
+- Creates and edits logins, secure notes, cards, identities and SSH keys, with a
+  password and passphrase generator. SSH keys are generated (Ed25519) or imported
+  from an OpenSSH private key file. An edit made in another app in the meantime is caught instead
   of overwritten.
 - Honors "ask for master password" on items.
 - Works offline from the local copy; edits need the server.
 
-SSH keys and custom fields can be viewed and copied but not yet edited here.
+Custom fields can be viewed and copied but not yet edited here, and SSH keys with a
+passphrase can't be imported yet.
 
 ## How it keeps the vault
 

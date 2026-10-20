@@ -1368,6 +1368,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "des"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "916a94e407b54f9034d71dd748234cd1e516ced6284009906ae246f177eafe5a"
+dependencies = [
+ "cipher",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4088,6 +4097,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "ssh-key",
  "tempfile",
  "tokio",
  "totp-rs",
@@ -4699,6 +4709,7 @@ checksum = "6e2d0073b297041425c7c3df6eb4792d598a15323fe63346852b092eca02904c"
 dependencies = [
  "cpufeatures 0.3.1",
  "universal-hash",
+ "zeroize",
 ]
 
 [[package]]
@@ -5450,6 +5461,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d68f2ec51b097e4c1a75b681a8bec621909b5e91f15bb7b840c4f2f7b01148b2"
 
 [[package]]
+name = "sec1"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d56d437c2f19203ce5f7122e507831de96f3d2d4d3be5af44a0b0a09d8a80e4d"
+dependencies = [
+ "base16ct",
+ "hybrid-array",
+]
+
+[[package]]
 name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5830,6 +5851,53 @@ dependencies = [
  "js-sys",
  "rsqlite-vfs",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "ssh-cipher"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d801accda99469cde6d73da741422610fdf6508a72d9a69d1b55cb241c720597"
+dependencies = [
+ "aead",
+ "aes",
+ "aes-gcm",
+ "chacha20",
+ "cipher",
+ "des",
+ "poly1305",
+ "ssh-encoding",
+ "zeroize",
+]
+
+[[package]]
+name = "ssh-encoding"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b54d0ed0498daf3f78d82e00e28c8eec9d75a067c4cfbcc7a0f7d0f4077749e"
+dependencies = [
+ "base64ct",
+ "ctutils",
+ "digest 0.11.3",
+ "pem-rfc7468",
+ "zeroize",
+]
+
+[[package]]
+name = "ssh-key"
+version = "0.7.0-rc.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9a32fae177b74a22aa9c5b01bf7e68b33545be32d9e381e248058d2adc15ce3"
+dependencies = [
+ "ctutils",
+ "ed25519-dalek",
+ "rand_core 0.10.1",
+ "sec1",
+ "sha2 0.11.1",
+ "signature",
+ "ssh-cipher",
+ "ssh-encoding",
+ "zeroize",
 ]
 
 [[package]]

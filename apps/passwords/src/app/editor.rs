@@ -1,11 +1,11 @@
-//! Creating and editing logins, notes, cards and identities. An existing item's secret
-//! fields are fetched one by one when the editor opens; the draft goes to the daemon as
-//! JSON when saved.
+//! Creating and editing logins, notes, cards, identities and SSH keys. An existing
+//! item's secret fields are fetched one by one when the editor opens; the draft goes to
+//! the daemon as JSON when saved.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use gtk::{gdk, glib, prelude::*};
+use gtk::{gdk, gio, glib, prelude::*};
 use nixe_passwords_proto::Error as Code;
 use nixe_passwords_proto::fields::{self, Spec};
 use nixe_ui::widgets as w;
@@ -17,8 +17,17 @@ use super::detail::{self, FieldRow};
 use super::prefs;
 use super::ui::{self, Ui, label};
 
-/// The kinds the editor makes; SSH keys are edited in the web vault for now.
-pub const KINDS: &[&str] = &["login", "note", "card", "identity"];
+/// The kinds the editor makes.
+pub const KINDS: &[&str] = &["login", "note", "card", "identity", "ssh"];
+
+/// "card", "secure note", "SSH key": the kind's name inside a sentence.
+fn noun(kind: &str) -> String {
+    let name = data::kind_name(kind);
+    if kind == "ssh" { name.to_string() } else { name.to_lowercase() }
+}
+
+/// Larger files can't be private keys.
+const KEY_FILE_LIMIT: usize = 64 * 1024;
 
 /// Fields with fixed choices, as the official clients offer them: `(value, label)`.
 fn choices(name: &str) -> Option<&'static [(&'static str, &'static str)]> {
@@ -60,6 +69,115 @@ enum Control {
     Secret(gtk::PasswordEntry),
     /// The values behind the drop-down's rows; the first row is "none".
     Choice(gtk::DropDown, RefCell<Vec<String>>),
+    /// An SSH private key: held, never shown.
+    Key(Rc<KeyPicker>),
+}
+
+/// An SSH key in the editor: the private key stays out of sight; its type, fingerprint
+/// and public key are shown, with buttons to generate a new key or import one.
+struct KeyPicker {
+    private: RefCell<String>,
+    summary: gtk::Label,
+    public: gtk::Label,
+    body: gtk::Box,
+}
+
+impl KeyPicker {
+    fn new(ui: &Ui) -> Rc<KeyPicker> {
+        let body = w::vbox(6);
+        let summary = label("No key yet: generate one, or import a private key file.", "dim");
+        let public = label("", "dim");
+        public.set_selectable(true);
+        // Keys and fingerprints wrap anywhere, without the hyphens Pango would add.
+        let unhyphenated = gtk::pango::AttrList::new();
+        unhyphenated.insert(gtk::pango::AttrInt::new_insert_hyphens(false));
+        for l in [&summary, &public] {
+            l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+            l.set_attributes(Some(&unhyphenated));
+        }
+        public.set_visible(false);
+        body.append(&summary);
+        body.append(&public);
+        let buttons = w::hbox(6);
+        let generate = w::labeled_button("view-refresh-symbolic", "Generate new key");
+        let import = w::labeled_button("document-open-symbolic", "Import from file…");
+        buttons.append(&generate);
+        buttons.append(&import);
+        body.append(&buttons);
+        let picker = Rc::new(KeyPicker { private: RefCell::new(String::new()), summary, public, body });
+        let (u, p) = (ui.clone(), picker.clone());
+        generate.connect_clicked(move |_| {
+            let (u, p) = (u.clone(), p.clone());
+            glib::spawn_future_local(async move {
+                match client::text("GenerateSshKey", None).await {
+                    Ok(json) => {
+                        let v: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+                        *p.private.borrow_mut() = v["private"].as_str().unwrap_or_default().to_string();
+                        p.show(v["public"].as_str().unwrap_or_default(), v["fingerprint"].as_str().unwrap_or_default());
+                    }
+                    Err(e) => ui::toast(&u, &e.to_string()),
+                }
+            });
+        });
+        let (u, p) = (ui.clone(), picker.clone());
+        import.connect_clicked(move |b| p.import(&u, b));
+        picker
+    }
+
+    fn show(&self, public: &str, fingerprint: &str) {
+        let kind = match public.split(' ').next().unwrap_or_default() {
+            "ssh-ed25519" => "Ed25519",
+            "ssh-rsa" => "RSA",
+            "ecdsa-sha2-nistp256" => "ECDSA P-256",
+            "ecdsa-sha2-nistp384" => "ECDSA P-384",
+            "ecdsa-sha2-nistp521" => "ECDSA P-521",
+            other => other,
+        };
+        self.summary.set_text(&format!("{kind} key · {fingerprint}"));
+        self.public.set_text(public);
+        self.public.set_visible(true);
+    }
+
+    /// Takes a private key: asks the daemon for its public key and fingerprint, and keeps
+    /// it only if the daemon can read it.
+    fn take(self: &Rc<Self>, ui: Option<&Ui>, private: String) {
+        let (ui, p) = (ui.cloned(), self.clone());
+        glib::spawn_future_local(async move {
+            match client::text("ReadSshKey", Some((private.as_str(),).to_variant())).await {
+                Ok(json) => {
+                    let v: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+                    *p.private.borrow_mut() = private;
+                    p.show(v["public"].as_str().unwrap_or_default(), v["fingerprint"].as_str().unwrap_or_default());
+                }
+                Err(e) => match ui {
+                    Some(ui) => ui::toast(&ui, &e.to_string()),
+                    None => p.summary.set_text(&format!("The saved key can't be read: {e}")),
+                },
+            }
+        });
+    }
+
+    fn import(self: &Rc<Self>, ui: &Ui, button: &gtk::Button) {
+        let parent = button.root().and_downcast::<gtk::Window>();
+        let (ui, p) = (ui.clone(), self.clone());
+        gtk::FileDialog::builder().title("Import a private key").modal(true).build().open(
+            parent.as_ref(),
+            gio::Cancellable::NONE,
+            move |picked| {
+                let Ok(file) = picked else { return };
+                glib::spawn_future_local(async move {
+                    match file.load_contents_future().await {
+                        Ok((bytes, _)) if bytes.len() <= KEY_FILE_LIMIT => match String::from_utf8(bytes.to_vec()) {
+                            Ok(text) => p.take(Some(&ui), text),
+                            Err(_) => ui::toast(&ui, "That file isn't a private key."),
+                        },
+                        Ok(_) => ui::toast(&ui, "That file is too large to be a private key."),
+                        Err(e) => ui::toast(&ui, &e.to_string()),
+                    }
+                });
+            },
+        );
+    }
 }
 
 impl Control {
@@ -83,6 +201,7 @@ impl Control {
             Control::Text(e) => e.clone().upcast(),
             Control::Secret(p) => p.clone().upcast(),
             Control::Choice(d, _) => d.clone().upcast(),
+            Control::Key(k) => k.body.clone().upcast(),
         }
     }
 
@@ -91,6 +210,7 @@ impl Control {
             Control::Text(e) => e.text().trim().to_string(),
             Control::Secret(p) => p.text().trim().to_string(),
             Control::Choice(d, values) => values.borrow().get(d.selected() as usize).cloned().unwrap_or_default(),
+            Control::Key(k) => k.private.borrow().clone(),
         }
     }
 
@@ -110,6 +230,7 @@ impl Control {
                 });
                 d.set_selected(at as u32);
             }
+            Control::Key(k) => k.take(None, value.to_string()),
         }
     }
 }
@@ -134,16 +255,23 @@ struct Form {
 }
 
 impl Form {
-    /// Shows the fields of `kind`: the login form, or the kind's own fields.
-    fn show_kind(&self, kind: &'static str) {
+    /// Shows the fields of `kind`: the login form, or the kind's own fields. An SSH key's
+    /// public key and fingerprint come from its private key, so only that is edited.
+    fn show_kind(&self, ui: &Ui, kind: &'static str) {
         self.kind.set(kind);
         self.login.set_visible(kind == "login");
         ui::clear(&self.others);
         let mut controls = Vec::new();
-        for spec in fields::of_kind(kind) {
-            let control = Control::new(spec);
-            field(&self.others, spec.label, &control.widget());
-            controls.push((spec.name, control));
+        if kind == "ssh" {
+            let control = Control::Key(KeyPicker::new(ui));
+            field(&self.others, "Key", &control.widget());
+            controls.push(("ssh.privateKey", control));
+        } else {
+            for spec in fields::of_kind(kind) {
+                let control = Control::new(spec);
+                field(&self.others, spec.label, &control.widget());
+                controls.push((spec.name, control));
+            }
         }
         self.others.set_visible(!controls.is_empty());
         *self.fields.borrow_mut() = controls;
@@ -169,7 +297,7 @@ pub fn open(ui: &Ui, entry: Option<Entry>) {
         None => starting_kind(ui),
     };
     let title = match &entry {
-        Some(_) => format!("Edit {}", data::kind_name(kind).to_lowercase()),
+        Some(_) => format!("Edit {}", noun(kind)),
         None => "New item".to_string(),
     };
     let (dialog, card) = w::dialog(&title, 560);
@@ -257,11 +385,11 @@ pub fn open(ui: &Ui, entry: Option<Entry>) {
         reprompt,
         banner,
     });
-    form.show_kind(kind);
-    let f = form.clone();
+    form.show_kind(ui, kind);
+    let (u, f) = (ui.clone(), form.clone());
     kind_choice.connect_selected_notify(move |d| {
         if let Some(k) = KINDS.get(d.selected() as usize) {
-            f.show_kind(k);
+            f.show_kind(&u, k);
         }
     });
     let id = entry.as_ref().map(|e| e.id.clone());
@@ -425,8 +553,12 @@ fn submit(ui: &Ui, form: &Rc<Form>, id: Option<String>, dialog: &gtk::Window, sa
     let name = form.name.text().trim().to_string();
     let kind = form.kind.get();
     if name.is_empty() {
-        ui::toast(ui, &format!("Give the {} a name.", data::kind_name(kind).to_lowercase()));
+        ui::toast(ui, &format!("Give the {} a name.", noun(kind)));
         form.name.grab_focus();
+        return;
+    }
+    if kind == "ssh" && form.fields.borrow().iter().all(|(_, c)| c.text().is_empty()) {
+        ui::toast(ui, "Generate a key or import one first.");
         return;
     }
     let folder = form.folder_ids.get(form.folder.selected() as usize).cloned().flatten();

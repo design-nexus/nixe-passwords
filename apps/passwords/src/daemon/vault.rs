@@ -497,6 +497,21 @@ impl Vault {
         Ok(serde_json::Value::Array(list).to_string())
     }
 
+    /// A new Ed25519 key for the editor: `{private, public, fingerprint}`.
+    pub fn generate_ssh_key(&self, scope: Scope) -> Result<String> {
+        need(scope, Scope::App)?;
+        let key = nixe_passwords_core::ssh::generate();
+        Ok(json!({"private": key.private.expose(), "public": key.public, "fingerprint": key.fingerprint}).to_string())
+    }
+
+    /// The public key and fingerprint of a private key the editor imported:
+    /// `{public, fingerprint}`.
+    pub fn read_ssh_key(&self, scope: Scope, private: &str) -> Result<String> {
+        need(scope, Scope::App)?;
+        let key = nixe_passwords_core::ssh::read(private).map_err(|e| Failure::new(Code::Failed, e.to_string()))?;
+        Ok(json!({"public": key.public, "fingerprint": key.fingerprint}).to_string())
+    }
+
     pub async fn generate_password(&self, scope: Scope, rules: &str) -> Result<Secret> {
         need(scope, Scope::App)?;
         let settings = self.settings().await;
@@ -720,8 +735,8 @@ fn parse_draft(text: &str) -> Result<LoginDraft> {
     })
 }
 
-/// A note, card or identity draft: `{kind, name, fields: {"card.number": …}, notes,
-/// folder, favorite, reprompt}`. Field names must belong to the kind.
+/// A note, card, identity or SSH key draft: `{kind, name, fields: {"card.number": …},
+/// notes, folder, favorite, reprompt}`. Field names must belong to the kind.
 fn parse_item_draft(text: &str) -> Result<ItemDraft> {
     #[derive(Deserialize)]
     struct Draft {
@@ -744,6 +759,7 @@ fn parse_item_draft(text: &str) -> Result<ItemDraft> {
         "note" => Kind::Note,
         "card" => Kind::Card,
         "identity" => Kind::Identity,
+        "ssh" => Kind::SshKey,
         _ => return Err(Failure::new(Code::Failed, "this kind of item can't be edited here")),
     };
     if d.name.trim().is_empty() {
@@ -850,7 +866,8 @@ mod tests {
         assert_eq!((d.kind, d.fields.len(), d.notes.is_none()), (Kind::Card, 1, true));
         assert!(parse_item_draft(r#"{"kind":"card","name":"Visa","fields":{"identity.ssn":"1"}}"#).is_err());
         assert!(parse_item_draft(r#"{"kind":"login","name":"GitHub"}"#).is_err());
-        assert!(parse_item_draft(r#"{"kind":"ssh","name":"Key"}"#).is_err());
+        assert!(parse_item_draft(r#"{"kind":"ssh","name":"Key","fields":{"ssh.privateKey":"…"}}"#).is_ok());
+        assert!(parse_item_draft(r#"{"kind":"other","name":"Key"}"#).is_err());
     }
 
     #[test]

@@ -345,3 +345,56 @@ async fn notes_cards_and_identities_round_trip_with_bw() {
     let wrong = item_draft(Kind::Identity, "Card from bw", &[]);
     assert!(s.update_item(&mut store, &server, &refresh, id, &wrong).await.is_err());
 }
+
+/// An SSH key made here reads back in `bw` with the public key and fingerprint worked
+/// out from its private key, whatever the draft said; a new key replaces all three; a
+/// key that can't be read is refused.
+#[tokio::test]
+#[ignore = "needs NIXE_PW_TEST_SERVER"]
+async fn ssh_keys_round_trip_with_bw() {
+    let email = common::fresh_email("ssh");
+    let password = "correct horse ssh battery";
+    common::register(&email, password, &bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() }).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+    let SignIn::Done(mut s) =
+        session::sign_in(&mut store, &server, &email, &Secret::new(password), "nixe test", None).await.unwrap()
+    else {
+        panic!("two-step login")
+    };
+    let refresh = Secret::new(s.refresh_token().unwrap().expose());
+    let bw = common::Bw::login(&email, password);
+    let fixture = |name: &str| std::fs::read_to_string(format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+
+    let private = fixture("ssh-ed25519");
+    let draft = item_draft(
+        Kind::SshKey,
+        "Deploy key",
+        &[
+            ("ssh.privateKey", private.as_str()),
+            ("ssh.publicKey", "ssh-ed25519 not-this-one"),
+            ("ssh.keyFingerprint", "SHA256:nope"),
+        ],
+    );
+    let id = s.create_item(&mut store, &server, &refresh, &draft).await.unwrap();
+    let item = bw.item(&id.to_string());
+    assert_eq!(item["type"], 5);
+    assert_eq!(item["sshKey"]["publicKey"], fixture("ssh-ed25519.pub").trim());
+    assert_eq!(item["sshKey"]["keyFingerprint"], fixture("ssh-ed25519.fp").trim());
+    assert_eq!(item["sshKey"]["privateKey"].as_str().unwrap().trim(), private.trim());
+
+    let made = nixe_passwords_core::ssh::generate();
+    let draft = item_draft(Kind::SshKey, "Deploy key", &[("ssh.privateKey", made.private.expose())]);
+    s.update_item(&mut store, &server, &refresh, id, &draft).await.unwrap();
+    let item = bw.item(&id.to_string());
+    assert_eq!(item["sshKey"]["publicKey"], made.public.as_str());
+    assert_eq!(item["sshKey"]["keyFingerprint"], made.fingerprint.as_str());
+
+    let bad = item_draft(Kind::SshKey, "Deploy key", &[("ssh.privateKey", "not a key")]);
+    assert!(matches!(
+        s.update_item(&mut store, &server, &refresh, id, &bad).await,
+        Err(SessionError::BadSshKey(nixe_passwords_core::ssh::SshError::Unreadable))
+    ));
+    assert_eq!(bw.item(&id.to_string())["sshKey"]["keyFingerprint"], made.fingerprint.as_str());
+}

@@ -171,7 +171,17 @@ impl Service {
         Ok(self.vault.update_login(self.scope, &id, &draft).await?)
     }
 
-    /// Creates a note, card or identity from a JSON draft; returns its id.
+    /// A new Ed25519 key as JSON `{private, public, fingerprint}`.
+    async fn generate_ssh_key(&self) -> Result<String, Error> {
+        Ok(self.vault.generate_ssh_key(self.scope)?)
+    }
+
+    /// The public key and fingerprint of an OpenSSH private key, as JSON.
+    async fn read_ssh_key(&self, private: String) -> Result<String, Error> {
+        Ok(self.vault.read_ssh_key(self.scope, &private)?)
+    }
+
+    /// Creates a note, card, identity or SSH key from a JSON draft; returns its id.
     async fn create_item(&self, draft: String) -> Result<String, Error> {
         Ok(self.vault.create_item(self.scope, &draft).await?)
     }
