@@ -21,6 +21,8 @@ pub enum Scope {
     Settings,
     /// The browser bridge: sealed messages from a paired extension (`Relay`) only.
     Browser,
+    /// Nixe Assistant's Passwords ability: status, search and copy, when turned on.
+    Assistant,
 }
 
 /// The executables allowed to connect, by file name, and their scopes.
@@ -29,6 +31,7 @@ const PEERS: &[(&str, Scope)] = &[
     ("nixe-glimpse", Scope::Glimpse),
     ("nixe-passwords-settings", Scope::Settings),
     ("nixe-passwords-bridge", Scope::Browser),
+    ("nixe-passwords-assistant", Scope::Assistant),
 ];
 
 /// Browsers that start the bridge, by executable name, and what they're called in the
@@ -139,6 +142,7 @@ mod tests {
         let dir = Path::new("/home/u/.local/bin");
         assert_eq!(scope_of(&dir.join("nixe-passwords"), dir), Some(Scope::App));
         assert_eq!(scope_of(&dir.join("nixe-glimpse"), dir), Some(Scope::Glimpse));
+        assert_eq!(scope_of(&dir.join("nixe-passwords-assistant"), dir), Some(Scope::Assistant));
         assert_eq!(scope_of(&dir.join("nixe-passwords-settings"), dir), Some(Scope::Settings));
         assert_eq!(scope_of(&dir.join("nixe-passwords-bridge"), dir), Some(Scope::Browser));
         assert_eq!(scope_of(&dir.join("nixe-passwordsd"), dir), None);

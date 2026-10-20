@@ -53,7 +53,7 @@ for a in "${apps[@]}"; do
       "$config/google-chrome/NativeMessagingHosts" "$config/BraveSoftware/Brave-Browser/NativeMessagingHosts"; do
       rm -f "$dir/io.github.design_nexus.nixe.passwords.json"
     done
-    bins="nixe-passwords nixe-passwordsd nixe-passwords-settings nixe-passwords-bridge"
+    bins="nixe-passwords nixe-passwordsd nixe-passwords-settings nixe-passwords-bridge nixe-passwords-assistant"
     # The session token in the desktop keyring; the vault itself stays on the server.
     [[ $purge == true ]] && command -v secret-tool >/dev/null && secret-tool clear application nixe-passwords 2>/dev/null || true
   fi

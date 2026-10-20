@@ -26,6 +26,9 @@ pub struct Settings {
     pub sync_minutes: u64,
     /// Whether Glimpse may search the vault and copy from it.
     pub glimpse: bool,
+    /// Whether Nixe Assistant may find logins and copy from them (each call still needs
+    /// a key press there). Off until turned on.
+    pub assistant: bool,
     /// A PEM file of extra certificate authorities, for a server with its own CA.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_ca: Option<PathBuf>,
@@ -46,6 +49,7 @@ impl Default for Settings {
             notify_copies: true,
             sync_minutes: 30,
             glimpse: true,
+            assistant: false,
             extra_ca: None,
             generate_passphrase: false,
             password_rules: PasswordRules::default(),

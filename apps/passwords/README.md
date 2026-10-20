@@ -27,6 +27,9 @@ the vault syncs. Two-step login works with an authenticator app or an emailed co
   read-only items and hidden passwords stay that way.
 - Creates items in an organization's collections, changes their collections, and
   moves personal items into an organization.
+- Nixe Assistant can find logins and copy them ("copy my password for GitHub") once
+  you turn that on in Passwords' settings. It asks for a key press each time and never
+  sees a password.
 - A Security section lists logins with weak, reused or year-old passwords, worked out
   on your computer. On request it checks them against Have I Been Pwned's breach data
   without sending the passwords (only the first five characters of each hash).

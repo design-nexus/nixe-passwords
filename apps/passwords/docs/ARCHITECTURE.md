@@ -191,9 +191,13 @@ clears any clipboard value this daemon still owns.
 - **Settings:** an extension helper installed like Glimpse's (`install.sh` writes
   `extension.toml`). Category `Accounts`. Pages: server, sync, lock timeout, clipboard
   timeout, browser pairing, Glimpse, notifications.
-- **Assistant (Phase 4):** an ability with `passwords.find` (metadata) and
-  `passwords.copy`. Both get explicit lines in `assistant-policy`'s capability table,
-  key-press approval and no voice approval. `passwords.copy` returns only "copied".
+- **Assistant:** the `passwords` ability (`apps/assistant/abilities/passwords`) runs
+  `nixe-passwords-assistant`, an MCP server on stdio that is a daemon peer of its own
+  (`assistant` scope: status, search, copy). `passwords.find` returns metadata;
+  `passwords.copy` returns only that it copied. Both are `assistant-policy`'s `Secrets`
+  capability: always asked, by key press, one call at a time. The daemon refuses the peer
+  unless `assistant = true` (off by default). The ability is unconfined so it can reach
+  the socket, which only the suite's own executables pass.
 - **Clipboard:** the daemon owns sensitive copies. Limits are in
   [SECURITY.md](SECURITY.md#clipboard).
 

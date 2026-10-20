@@ -28,7 +28,7 @@ app_info() {
     glimpse) ids="Glimpse" bins="nixe-glimpse nixe-glimpsed nixe-glimpse-settings" deps="bubblewrap" ;;
     contacts) ids="Contacts" defaults=true ;;
     git) ids="Git" deps="gtksourceview5 libsecret git-lfs" ;;
-    passwords) ids="Passwords" bins="nixe-passwords nixe-passwordsd nixe-passwords-settings nixe-passwords-bridge" deps="libsecret librsvg zip" ;;
+    passwords) ids="Passwords" bins="nixe-passwords nixe-passwordsd nixe-passwords-settings nixe-passwords-bridge nixe-passwords-assistant" deps="libsecret librsvg zip" ;;
     store) ids="Store" bins="nixe-store nixe-store-helper" deps="pacman appstream libarchive polkit base-devel libjxl" ;;
     tasks) ids="Tasks" old_bins="tasks" ;;
     torrents) ids="Torrents" old_bins="torrents" deps="libtorrent-rasterbar boost" defaults=true ;;

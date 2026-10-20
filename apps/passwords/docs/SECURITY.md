@@ -57,6 +57,9 @@ against that. What Nixe Passwords does:
   what it can ask for:
   - Glimpse can search metadata and ask for copies, but can't read a secret back or
     reveal anything.
+  - The Assistant's helper can do the same and less (no suggestions, generating or
+    opening), only while its setting is on, and the assistant asks for a key press
+    before each call.
   - Only the app can reveal a field.
 - Rate limits on copy and reveal, plus a notification for each copy, make silent bulk
   extraction visible.

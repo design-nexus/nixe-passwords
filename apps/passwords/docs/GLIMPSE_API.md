@@ -25,6 +25,7 @@ is disconnected before any method runs.
 | `~/.local/bin/nixe-glimpse` | `glimpse`: `Status`, `Search`, `Suggest`, `Copy`, `OpenUrl`, `Generate`, `Lock` |
 | `~/.local/bin/nixe-passwords-settings` | `settings`: `Status`, `Lock`, `Sync`, pairing list and revoke |
 | `~/.local/bin/nixe-passwords-bridge` | `browser`: per-origin calls in [NATIVE_MESSAGING.md](NATIVE_MESSAGING.md) |
+| `~/.local/bin/nixe-passwords-assistant` | `assistant`: `Status`, `Search`, `Copy` (username, password, code). Off until `assistant = true` |
 
 Each integration can be turned off in settings (`glimpse = false` and so on). Its peer
 is then refused with `Denied`. In debug builds an extra allowlist entry for

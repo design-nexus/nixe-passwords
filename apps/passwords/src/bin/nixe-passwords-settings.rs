@@ -35,7 +35,7 @@ fn pages() -> Value {
     json!([{
         "id": "passwords", "title": "Passwords", "icon": "dialog-password-symbolic",
         "description": "Vault locking, clipboard and Glimpse",
-        "keywords": "passwords vault vaultwarden bitwarden lock clipboard glimpse",
+        "keywords": "passwords vault vaultwarden bitwarden lock clipboard glimpse assistant",
     }])
 }
 
@@ -110,6 +110,9 @@ fn describe() -> Value {
             {"title": "Glimpse", "rows": [
                 {"kind": "switch", "key": "glimpse", "title": "Find logins in Glimpse", "desc": "Type “pw” and a name. Passwords are never shown there.", "value": s.glimpse},
             ]},
+            {"title": "Nixe Assistant", "rows": [
+                {"kind": "switch", "key": "assistant", "title": "Find and copy logins", "desc": "The Assistant asks for a key press each time and never sees a password.", "value": s.assistant},
+            ]},
         ]
     })
 }
@@ -133,7 +136,7 @@ fn set(key: &str, value: &str) -> Result<Value, String> {
         "lock_minutes" | "clipboard_seconds" | "sync_minutes" => {
             toml::Value::Integer(value.parse::<i64>().map_err(|_| "not a number".to_string())?)
         }
-        "lock_on_screen_lock" | "lock_on_sleep" | "paste_once" | "notify_copies" | "glimpse" => {
+        "lock_on_screen_lock" | "lock_on_sleep" | "paste_once" | "notify_copies" | "glimpse" | "assistant" => {
             toml::Value::Boolean(value == "true")
         }
         _ => return Err(format!("unknown setting {key}")),

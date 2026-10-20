@@ -100,6 +100,7 @@ pub(super) struct State {
     pub(super) last_used: Instant,
     pub(super) recent: VecDeque<Uuid>,
     pub(super) glimpse_copies: VecDeque<Instant>,
+    pub(super) assistant_copies: VecDeque<Instant>,
     pub(super) app_reveals: VecDeque<Instant>,
     /// When the app last confirmed the master password (for re-prompting items).
     pub(super) confirmed: Option<Instant>,
@@ -129,6 +130,7 @@ impl Vault {
                 last_used: Instant::now(),
                 recent: VecDeque::new(),
                 glimpse_copies: VecDeque::new(),
+                assistant_copies: VecDeque::new(),
                 app_reveals: VecDeque::new(),
                 confirmed: None,
                 edits: 0,
@@ -160,7 +162,7 @@ impl Vault {
 
     pub async fn search(&self, scope: Scope, query: &str, limit: u32) -> Result<Vec<Item>> {
         let mut st = self.state.lock().await;
-        allow_glimpse(scope, &mut st)?;
+        allow_finder(scope, &mut st)?;
         st.last_used = Instant::now();
         let session = st.session.as_ref().ok_or_else(locked)?;
         let query: String = query.chars().take(QUERY_MAX).collect();
@@ -200,15 +202,20 @@ impl Vault {
             (field::USERNAME, _) => Field::Username,
             (field::PASSWORD, _) => Field::Password,
             (field::TOTP, _) => Field::Totp,
-            // The window may copy any field; Glimpse only those three.
+            // The window may copy any field; Glimpse and the Assistant only those three.
             (other, Scope::App) => any_field(other)?,
             _ => return Err(Failure::new(Code::NoField, "unknown field")),
         };
         let id = parse_id(id)?;
         let (value, settings, label) = {
             let mut st = self.state.lock().await;
-            allow_glimpse(scope, &mut st)?;
-            if scope == Scope::Glimpse && !within(&mut st.glimpse_copies, GLIMPSE_COPIES_PER_MINUTE) {
+            allow_finder(scope, &mut st)?;
+            let copies = match scope {
+                Scope::Glimpse => Some(&mut st.glimpse_copies),
+                Scope::Assistant => Some(&mut st.assistant_copies),
+                _ => None,
+            };
+            if copies.is_some_and(|c| !within(c, GLIMPSE_COPIES_PER_MINUTE)) {
                 return Err(Failure::new(Code::RateLimited, "too many copies; wait a minute"));
             }
             let settings = st.settings.refresh().clone();
@@ -732,6 +739,16 @@ pub(super) fn need(scope: Scope, wanted: Scope) -> Result<()> {
 
 fn need_any(scope: Scope, wanted: &[Scope]) -> Result<()> {
     if wanted.contains(&scope) { Ok(()) } else { Err(denied()) }
+}
+
+/// Searching and copying: the app always; Glimpse and the Assistant when their
+/// integration is turned on.
+fn allow_finder(scope: Scope, st: &mut State) -> Result<()> {
+    match scope {
+        Scope::Assistant if st.settings.refresh().assistant => Ok(()),
+        Scope::Assistant => Err(Failure::new(Code::Denied, "turn on Nixe Assistant in Passwords' settings first")),
+        _ => allow_glimpse(scope, st),
+    }
 }
 
 /// Glimpse calls are refused when the Glimpse integration is turned off.

@@ -33,6 +33,7 @@ impl Scratch {
             std::fs::copy(&me, bin.join(name)).unwrap();
         }
         std::fs::copy(env!("CARGO_BIN_EXE_nixe-passwords-bridge"), bin.join("nixe-passwords-bridge")).unwrap();
+        std::fs::copy(env!("CARGO_BIN_EXE_nixe-passwords-assistant"), bin.join("nixe-passwords-assistant")).unwrap();
         let config = dir.path().join("config/nixe-passwords");
         std::fs::create_dir_all(&config).unwrap();
         std::fs::write(config.join("settings.toml"), format!("notify_copies = false\n{extra_settings}")).unwrap();
@@ -73,6 +74,44 @@ impl Scratch {
         let line =
             text.lines().find_map(|l| l.split_once("RESULTS ").map(|(_, r)| r)).unwrap_or_else(|| panic!("{role}: {text}"));
         serde_json::from_str(line).unwrap()
+    }
+}
+
+impl Scratch {
+    /// Runs the assistant ability with these tool calls (`[name, arguments]`), after the
+    /// MCP handshake; returns each call's result.
+    fn assistant(&self, calls: &[(&str, Value)]) -> Vec<Value> {
+        use std::io::Write;
+        let mut lines = vec![
+            json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}}),
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+        ];
+        for (i, (name, args)) in calls.iter().enumerate() {
+            lines.push(
+                json!({"jsonrpc": "2.0", "id": i + 2, "method": "tools/call", "params": {"name": name, "arguments": args}}),
+            );
+        }
+        let mut child = Command::new(self.dir.path().join("bin/nixe-passwords-assistant"))
+            .env_clear()
+            .env("XDG_RUNTIME_DIR", self.dir.path().join("run"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        for line in &lines {
+            writeln!(stdin, "{line}").unwrap();
+        }
+        drop(stdin);
+        let out = child.wait_with_output().unwrap();
+        let replies: Vec<Value> =
+            String::from_utf8_lossy(&out.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(replies[0]["result"]["serverInfo"]["name"], "nixe-passwords");
+        let tools: Vec<&str> =
+            replies[1]["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(tools, ["passwords.find", "passwords.copy"]);
+        replies[2..].iter().map(|r| r["result"].clone()).collect()
     }
 }
 
@@ -335,6 +374,30 @@ async fn signed_in_vault() {
     let app = s.as_peer("nixe-passwords", json!([["DeleteAttachment", id, attachment], ["Attachments", id]]));
     ok(&app[0]);
     assert_eq!(ok(&app[1]), "[]");
+
+    // The Assistant: refused until turned on; then it finds logins as names and sites
+    // only, and copying never hands back the value.
+    let found = s.assistant(&[("passwords.find", json!({"query": "git"}))]);
+    assert_eq!(found[0]["isError"], true);
+    assert!(found[0]["content"][0]["text"].as_str().unwrap().contains("turn on"));
+    std::thread::sleep(Duration::from_millis(20));
+    let settings = s.dir.path().join("config/nixe-passwords/settings.toml");
+    let text = std::fs::read_to_string(&settings).unwrap();
+    std::fs::write(&settings, format!("{text}assistant = true\n")).unwrap();
+    let got = s.assistant(&[
+        ("passwords.find", json!({"query": "git"})),
+        ("passwords.copy", json!({"query": "github", "field": "password"})),
+        ("passwords.copy", json!({"id": bank, "field": "password"})),
+        ("passwords.copy", json!({"query": "nothing like this", "field": "password"})),
+    ]);
+    let logins = &got[0]["structuredContent"]["logins"];
+    assert_eq!(logins[0]["name"], "GitHub");
+    assert_eq!(logins[0]["site"], "github.com");
+    // No compositor here, so the copy itself fails, without the value.
+    assert_eq!(got[1]["isError"], true);
+    assert!(got[2]["content"][0]["text"].as_str().unwrap().contains("master password"));
+    assert!(got[3]["content"][0]["text"].as_str().unwrap().contains("no login matches"));
+    assert!(!Value::Array(got.clone()).to_string().contains("canary"));
 
     // Nothing decrypted reached the disk.
     for path in walk(s.dir.path()) {

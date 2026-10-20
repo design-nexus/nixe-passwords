@@ -195,6 +195,13 @@ pub fn open(ui: &Ui) {
         v.glimpse,
         |p, x| p.vault.glimpse = x,
     );
+    switch(
+        &g,
+        "Nixe Assistant",
+        "Let the Assistant find logins and copy them to the clipboard. It asks for a key press each time and never sees a password.",
+        v.assistant,
+        |p, x| p.vault.assistant = x,
+    );
 
     let g = group(&body, "Browsers");
     g.append(&w::row(
