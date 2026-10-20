@@ -129,6 +129,15 @@ a later phase.
 - **Web addresses:** every one is saved with its encrypted checksum. An address that was
   already on the item keeps its match rule.
 
+**Attachments:** each file has its own key, wrapped by the item's key, as the official
+clients do. Adding one encrypts it (at most 100 MB, held in memory meanwhile), announces
+it (`POST /api/ciphers/{id}/attachment/v2`) and uploads it to the server
+(`application/octet-stream`; without a type Vaultwarden stores the file re-encoded).
+Downloads follow the server's link only if it's on the same server. The window never
+holds a decrypted file: it opens the file the user picked and passes the handle to
+the daemon, which decrypts into it or encrypts from it. Saved files are created 0600,
+and a failed save is removed.
+
 **Organizations:** the server's permissions are enforced in the core, not only shown in
 the app:
 - **Read-only items** (`edit: false`, from a read-only collection) can't be changed;

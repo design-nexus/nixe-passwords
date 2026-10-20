@@ -1,6 +1,7 @@
 //! The Passwords window. It holds no keys: everything goes through the daemon.
 
 mod account;
+mod attachments;
 mod client;
 mod data;
 mod detail;

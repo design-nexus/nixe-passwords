@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gio::glib::{self, prelude::*};
+use gio::prelude::UnixFDListExtManual;
 
 use crate::{Error, INTERFACE, OBJECT_PATH, SERVICE, address};
 
@@ -73,6 +74,31 @@ pub async fn call(method: &str, args: Option<glib::Variant>) -> Result<glib::Var
         }
     }
     Err(Fail::local("Nixe Passwords' service isn't answering"))
+}
+
+/// Calls `method` with string arguments followed by a file (a D-Bus handle): the
+/// daemon reads or writes the file itself, so its contents never pass through here.
+pub async fn call_with_file(method: &str, args: &[&str], file: std::os::fd::OwnedFd) -> Result<glib::Variant> {
+    let conn = connection().await?;
+    let files = gio::UnixFDList::new();
+    let handle = files.append(&file).map_err(fail)?;
+    let mut params: Vec<glib::Variant> = args.iter().map(|a| a.to_variant()).collect();
+    params.push(glib::variant::Handle(handle).to_variant());
+    let reply = conn
+        .call_with_unix_fd_list_future(
+            None,
+            OBJECT_PATH,
+            INTERFACE,
+            method,
+            Some(&glib::Variant::tuple_from_iter(params)),
+            None,
+            gio::DBusCallFlags::NONE,
+            // Attachments can be large: give the transfer time.
+            600_000,
+            Some(&files),
+        )
+        .await;
+    reply.map(|(v, _)| v).map_err(fail)
 }
 
 /// A string reply.

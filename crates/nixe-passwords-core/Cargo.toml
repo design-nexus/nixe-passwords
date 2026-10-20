@@ -12,7 +12,7 @@ nixe-passwords-proto = { path = "../nixe-passwords-proto" }
 aes-gcm = "0.11"
 bitwarden-crypto = "=4.0.0"
 bitwarden-encoding = "=4.0.0"
-reqwest = { version = "0.13", features = ["json", "form"] }
+reqwest = { version = "0.13", features = ["json", "form", "multipart"] }
 hkdf = "0.13"
 psl = "2"
 rand = "0.10"

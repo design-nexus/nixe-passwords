@@ -123,6 +123,15 @@ async fn call_one(conn: &zbus::Connection, call: &[Value]) -> Value {
             conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1),)).await
         }
         "SignIn" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2), s(3), 255u8, String::new())).await,
+        "Attachments" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1),)).await,
+        "DeleteAttachment" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2))).await,
+        // [method, id, name or attachment, path]: the file goes as a handle.
+        "AddAttachment" | "SaveAttachment" => {
+            let file =
+                if method == "AddAttachment" { std::fs::File::open(s(3)).unwrap() } else { std::fs::File::create(s(3)).unwrap() };
+            let fd = zbus::zvariant::Fd::from(std::os::fd::AsFd::as_fd(&file));
+            conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2), fd)).await
+        }
         other => panic!("unknown call {other}"),
     };
     match reply {
@@ -133,6 +142,7 @@ async fn call_one(conn: &zbus::Connection, call: &[Value]) -> Value {
                 "" => json!({"ok": null}),
                 "s" => json!({"ok": body.deserialize::<String>().unwrap()}),
                 "u" => json!({"ok": body.deserialize::<u32>().unwrap()}),
+                "t" => json!({"ok": body.deserialize::<u64>().unwrap()}),
                 "ssu" | "(ssu)" => json!({"ok": body.deserialize::<(String, String, u32)>().unwrap()}),
                 "a(ssssbs)" => {
                     json!({"ok": body.deserialize::<Vec<(String, String, String, String, bool, String)>>().unwrap()})
@@ -302,6 +312,29 @@ async fn signed_in_vault() {
     assert_eq!(err(&app[2]), "Failed");
     assert_eq!(err(&app[3]), "Reprompt");
     assert_eq!(ok(&app[5]), "canary-guarded-Pw!9");
+
+    // Attachments go in from a file the app opened and come out into another one; the
+    // contents never pass through the call itself. Glimpse gets neither.
+    let files = tempfile::tempdir().unwrap();
+    let (original, saved) = (files.path().join("codes.txt"), files.path().join("saved.txt"));
+    std::fs::write(&original, "canary-daemon attachment\n").unwrap();
+    let path = |p: &Path| p.display().to_string();
+    let app = s.as_peer("nixe-passwords", json!([["AddAttachment", id, "codes.txt", path(&original)], ["Attachments", id]]));
+    ok(&app[0]);
+    let listed: Value = serde_json::from_str(ok(&app[1]).as_str().unwrap()).unwrap();
+    assert_eq!(listed[0]["name"], "codes.txt");
+    let attachment = listed[0]["id"].as_str().unwrap().to_string();
+    let app = s.as_peer("nixe-passwords", json!([["SaveAttachment", id, attachment, path(&saved)]]));
+    assert_eq!(ok(&app[0]), 25);
+    assert_eq!(std::fs::read(&saved).unwrap(), std::fs::read(&original).unwrap());
+    let g = s.as_peer(
+        "nixe-glimpse",
+        json!([["Attachments", id], ["SaveAttachment", id, attachment, path(&files.path().join("g.txt"))]]),
+    );
+    assert_eq!((err(&g[0]), err(&g[1])), ("Denied", "Denied"));
+    let app = s.as_peer("nixe-passwords", json!([["DeleteAttachment", id, attachment], ["Attachments", id]]));
+    ok(&app[0]);
+    assert_eq!(ok(&app[1]), "[]");
 
     // Nothing decrypted reached the disk.
     for path in walk(s.dir.path()) {

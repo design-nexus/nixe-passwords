@@ -27,6 +27,8 @@ the vault syncs. Two-step login works with an authenticator app or an emailed co
   read-only items and hidden passwords stay that way.
 - Creates items in an organization's collections, changes their collections, and
   moves personal items into an organization.
+- Attachments: saves them to a file you choose, attaches files (up to 100 MB), and
+  deletes them. Nothing decrypted goes to a temporary file.
 - Works offline from the local copy; edits need the server.
 
 Custom fields can be viewed and copied but not yet edited here, and SSH keys with a

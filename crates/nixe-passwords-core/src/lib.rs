@@ -1,6 +1,7 @@
 //! Vaultwarden client library for Nixe Passwords. See apps/passwords/docs.
 
 pub mod api;
+pub mod attach;
 pub mod crypto;
 pub mod edit;
 pub mod generate;

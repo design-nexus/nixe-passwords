@@ -145,9 +145,15 @@ pub fn show(ui: &Ui) {
     }
     // A card's, identity's or SSH key's fields, and custom fields, arrive from the daemon;
     // this keeps their place above the notes.
+    // Both stay hidden until they have something, so an empty one adds no gap.
     let more = w::vbox(12);
+    more.set_visible(false);
     ui.details.append(&more);
     show_fields(ui, &e, &more);
+    let files = w::vbox(12);
+    files.set_visible(false);
+    ui.details.append(&files);
+    super::attachments::show(ui, &e, &files);
     let rows = group(ui, "Notes");
     rows.append(&secret_row(ui, &e, "notes", "Notes", ""));
 }
@@ -189,6 +195,7 @@ fn show_fields(ui: &Ui, e: &Entry, into: &gtk::Box) {
             if fields.is_empty() {
                 continue;
             }
+            into.set_visible(true);
             into.append(&label(&title.to_uppercase(), "group-title"));
             let rows = w::vbox(0);
             rows.add_css_class("group-list");

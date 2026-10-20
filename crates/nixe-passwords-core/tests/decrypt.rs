@@ -131,6 +131,16 @@ fn lock_drops_every_key() {
 }
 
 #[test]
+fn files_round_trip() {
+    let a = account("pbkdf2");
+    let keys = unlock(&a);
+    let (mut k, _) = keys.new_item(None).unwrap();
+    let data: Vec<u8> = (0..=255u8).cycle().take(300_000).collect();
+    let (wrapped, encrypted) = k.encrypt_file(&data).unwrap();
+    assert_eq!(k.decrypt_file(Some(&wrapped), &encrypted).unwrap().expose(), data.as_slice());
+}
+
+#[test]
 fn new_item_key_round_trips() {
     let a = account("pbkdf2");
     let keys = unlock(&a);

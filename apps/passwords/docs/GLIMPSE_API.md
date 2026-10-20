@@ -93,6 +93,10 @@ Item ids are not secret, but the list reveals usage, so it isn't written to disk
 | `UpdateItem` | `(s id, s draft) → ()` | The kind must match the item's. Like `UpdateLogin`, `organization` and `collections` move a personal item into an organization or change an organization item's collections; read-only items are refused with `Denied` |
 | `GenerateSshKey` | `() → s` | A new Ed25519 key: JSON `{private, public, fingerprint}` |
 | `ReadSshKey` | `(s private) → s` | JSON `{public, fingerprint}` for an OpenSSH private key; fails for a key with a passphrase |
+| `Attachments` | `(s id) → s` | JSON `[{id, name, size}]`; `size` is the server's, of the encrypted file |
+| `SaveAttachment` | `(s id, s attachment, h file) → t written` | `file` is a handle to the file the user chose, opened by the app; the daemon decrypts into it. Items that ask for the master password need it first (`Reprompt`) |
+| `AddAttachment` | `(s id, s name, h file) → ()` | `file` is a handle to the file the user picked; at most 100 MB. Read-only items are refused |
+| `DeleteAttachment` | `(s id, s attachment) → ()` | Permanent: attachments don't go to the trash |
 | `Trash`, `Restore` | `(s id) → ()` | |
 
 ## Glimpse behaviour

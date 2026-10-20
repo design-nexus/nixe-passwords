@@ -310,6 +310,34 @@ impl ItemKey<'_> {
         Ok(SecretBytes::new(plain))
     }
 
+    /// Decrypts an attachment's file: with the attachment's own key (`attachment.key`,
+    /// wrapped by this item key), or with this item key itself for attachments from
+    /// before attachment keys.
+    pub fn decrypt_file(&mut self, attachment_key: Option<&str>, data: &[u8]) -> Result<SecretBytes> {
+        let enc = bw::EncString::from_buffer(data).map_err(|_| CryptoError::Malformed)?;
+        let key = match attachment_key {
+            Some(wrapped) => {
+                let wrapped = bw::EncString::parse_strict(wrapped).map_err(|_| CryptoError::Malformed)?;
+                self.ctx.unwrap_symmetric_key(self.key, &wrapped).map_err(|_| CryptoError::Decrypt)?
+            }
+            None => self.key,
+        };
+        let plain: Vec<u8> = enc.decrypt(&mut self.ctx, key).map_err(|_| CryptoError::Decrypt)?;
+        Ok(SecretBytes::new(plain))
+    }
+
+    /// Encrypts a file for a new attachment under a new key of its own. Returns the key
+    /// wrapped by this item key (`attachment.key`) and the encrypted file.
+    pub fn encrypt_file(&mut self, data: &[u8]) -> Result<(String, Vec<u8>)> {
+        let key = self.ctx.make_symmetric_key(bw::SymmetricKeyAlgorithm::Aes256CbcHmac);
+        let wrapped = self.ctx.wrap_symmetric_key(self.key, key).map_err(|_| CryptoError::Encrypt)?;
+        let wrapped =
+            serde_json::to_value(&wrapped).ok().and_then(|v| v.as_str().map(str::to_string)).ok_or(CryptoError::Encrypt)?;
+        let enc: bw::EncString =
+            bw::OctetStreamBytes::from(data.to_vec()).encrypt(&mut self.ctx, key).map_err(|_| CryptoError::Encrypt)?;
+        Ok((wrapped, enc.to_buffer().map_err(|_| CryptoError::Encrypt)?))
+    }
+
     /// Encrypts a key (an attachment's), which is bytes rather than text.
     pub fn encrypt_key_bytes(&mut self, plain: &[u8]) -> Result<String> {
         let enc: bw::EncString = bw::BitwardenLegacyKeyBytes::from(plain.to_vec())

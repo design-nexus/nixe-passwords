@@ -9,7 +9,9 @@ window.passwords-window .list-toolbar { min-height: 46px; padding: 0 12px 0 14px
 .item-row-description { font-size: 0.88em; }
 .item-detail-pane { border-left: 1px solid @hairline; }
 .item-details { padding: 12px 24px 36px; }
-.item-details > .group-title { margin-top: 14px; margin-bottom: 0; }
+/* Sections that load later (fields, attachments) sit in a box of their own. */
+.item-details > .group-title,
+.item-details > box > .group-title { margin-top: 14px; margin-bottom: 0; }
 .item-name { font-size: 1.2em; font-weight: 600; }
 .item-empty { color: @theme_dim_text; }
 .secret-value { font-variant-numeric: tabular-nums; }

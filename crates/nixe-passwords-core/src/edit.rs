@@ -373,12 +373,12 @@ impl Session {
         self.take(store, restored)
     }
 
-    fn cipher(&self, id: Uuid) -> Result<&Cipher> {
+    pub(crate) fn cipher(&self, id: Uuid) -> Result<&Cipher> {
         self.snapshot.ciphers.iter().find(|c| c.id == id).ok_or(SessionError::Api(ApiError::NotFound))
     }
 
     /// Puts the server's copy of an item into the store, the snapshot and the view.
-    fn take(&mut self, store: &mut Store, cipher: Cipher) -> Result<()> {
+    pub(crate) fn take(&mut self, store: &mut Store, cipher: Cipher) -> Result<()> {
         store.put_cipher(&cipher)?;
         self.view.put(&self.keys, &cipher);
         match self.snapshot.ciphers.iter_mut().find(|c| c.id == cipher.id) {

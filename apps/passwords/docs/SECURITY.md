@@ -9,7 +9,8 @@ can't meet a rule, the change waits; the rule doesn't bend.
 | --- | --- |
 | Master password | The app's password entry, then the daemon for the length of one KDF call |
 | Master key, user key, private key, org keys, cipher keys | Daemon memory while unlocked |
-| Decrypted secret fields (passwords, TOTP seeds, notes, card numbers, SSH keys, attachments) | Daemon memory for one request; the app for one reveal or edit; the clipboard after a copy |
+| Decrypted secret fields (passwords, TOTP seeds, notes, card numbers, SSH keys) | Daemon memory for one request; the app for one reveal or edit; the clipboard after a copy |
+| Decrypted attachments | Daemon memory for one download or upload; then only the file the user chose (0600). Never the app, never a temporary file |
 | Decrypted metadata (names, usernames, URIs, folder names) | Daemon memory while unlocked; shown in the app and in Glimpse results |
 | Access token | Daemon memory |
 | Refresh token | Secret Service |

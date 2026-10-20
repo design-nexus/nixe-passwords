@@ -6,13 +6,13 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
-use nixe_passwords_core::api::{ApiError, Server, TwoFactor, TwoFactorAnswer};
+use nixe_passwords_core::api::{ApiError, MAX_ATTACHMENT, Server, TwoFactor, TwoFactorAnswer};
 use nixe_passwords_core::crypto::CryptoError;
 use nixe_passwords_core::edit::{ItemDraft, LoginDraft, Place};
 use nixe_passwords_core::generate;
 use nixe_passwords_core::keyring;
 use nixe_passwords_core::model::Kind;
-use nixe_passwords_core::secret::Secret;
+use nixe_passwords_core::secret::{Secret, SecretBytes};
 use nixe_passwords_core::session::{self, Session, SessionError, SignIn};
 use nixe_passwords_core::store::Store;
 use nixe_passwords_core::vault::{Entry, Field, RevealError, reveal, specs};
@@ -573,6 +573,84 @@ impl Vault {
         let session = st.session.as_mut().ok_or_else(locked)?;
         st.edits += 1;
         session.update_item(&mut st.store, &server, &refresh, id, &draft).await?;
+        st.last_used = Instant::now();
+        Ok(())
+    }
+
+    /// An item's attachments as JSON `[{id, name, size}]`.
+    pub async fn attachments(&self, scope: Scope, id: &str) -> Result<String> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let st = self.state.lock().await;
+        let session = st.session.as_ref().ok_or_else(locked)?;
+        let list: Vec<_> =
+            session.attachments(id)?.iter().map(|a| json!({"id": a.id, "name": a.name.expose(), "size": a.size})).collect();
+        Ok(serde_json::Value::Array(list).to_string())
+    }
+
+    /// Downloads and decrypts an attachment into `file`, which the app opened where the
+    /// user chose. The decrypted bytes go nowhere else. Returns how many were written.
+    pub async fn save_attachment(&self, scope: Scope, id: &str, attachment: &str, file: std::fs::File) -> Result<u64> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let data = {
+            let mut st = self.state.lock().await;
+            // Like revealing a secret field: items that ask for the master password do.
+            reprompt_check(&st, scope, id, Field::Notes)?;
+            let st = &mut *st;
+            let (server, refresh) = online(st)?;
+            let session = st.session.as_mut().ok_or_else(locked)?;
+            st.last_used = Instant::now();
+            session.download_attachment(&server, &refresh, id, attachment).await?
+        };
+        tokio::task::spawn_blocking(move || {
+            use std::io::Write;
+            let mut file = file;
+            file.write_all(data.expose())?;
+            file.sync_all()?;
+            Ok::<u64, std::io::Error>(data.expose().len() as u64)
+        })
+        .await
+        .map_err(|_| Failure::new(Code::Failed, "the file couldn't be written"))?
+        .map_err(|e| Failure::new(Code::Failed, format!("the file couldn't be written: {e}")))
+    }
+
+    /// Encrypts the contents of `file` (opened by the app) and adds them to the item as
+    /// an attachment called `name`.
+    pub async fn add_attachment(&self, scope: Scope, id: &str, name: &str, file: std::fs::File) -> Result<()> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let name = name.rsplit('/').next().unwrap_or_default().trim();
+        if name.is_empty() || name.len() > 255 {
+            return Err(Failure::new(Code::Failed, "the file needs a name of at most 255 bytes"));
+        }
+        let data = tokio::task::spawn_blocking(move || {
+            use std::io::Read;
+            let mut data = Vec::new();
+            file.take(MAX_ATTACHMENT as u64 + 1).read_to_end(&mut data).map(|_| SecretBytes::new(data))
+        })
+        .await
+        .map_err(|_| Failure::new(Code::Failed, "the file couldn't be read"))?
+        .map_err(|e| Failure::new(Code::Failed, format!("the file couldn't be read: {e}")))?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        st.edits += 1;
+        session.add_attachment(&mut st.store, &server, &refresh, id, name, data.expose()).await?;
+        st.last_used = Instant::now();
+        Ok(())
+    }
+
+    pub async fn delete_attachment(&self, scope: Scope, id: &str, attachment: &str) -> Result<()> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        st.edits += 1;
+        session.delete_attachment(&mut st.store, &server, &refresh, id, attachment).await?;
         st.last_used = Instant::now();
         Ok(())
     }

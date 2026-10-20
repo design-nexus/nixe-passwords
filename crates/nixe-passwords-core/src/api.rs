@@ -20,6 +20,10 @@ const DEVICE_TYPE: &str = "8";
 /// The identity server's client id for desktop apps.
 const CLIENT_ID: &str = "desktop";
 const MAX_BODY: usize = 64 << 20;
+/// The largest attachment this client stores or fetches (plaintext; the encrypted file
+/// is a few dozen bytes more). Files are held in memory while they're encrypted.
+pub const MAX_ATTACHMENT: usize = 100 << 20;
+const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_ERROR_TEXT: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -331,6 +335,66 @@ impl Server {
         serde_json::from_value(value).map_err(|_| ApiError::Protocol)
     }
 
+    /// Downloads an attachment's encrypted file. The download link must be on this
+    /// server: a file from anywhere else isn't fetched.
+    pub async fn download_attachment(&self, access: &Secret, cipher: Uuid, attachment: &str) -> Result<Vec<u8>> {
+        let req = self.http.get(self.at(&format!("/api/ciphers/{cipher}/attachment/{attachment}"))).bearer_auth(access.expose());
+        let info = expect_ok(self.send(req).await?).await?;
+        let link = info["url"].as_str().ok_or(ApiError::Protocol)?;
+        let base = url::Url::parse(&self.base).map_err(|_| ApiError::BadServerUrl)?;
+        let link = base.join(link).map_err(|_| ApiError::Protocol)?;
+        if link.origin() != base.origin() {
+            return Err(ApiError::Protocol);
+        }
+        let resp = self.send(self.http.get(link).timeout(ATTACHMENT_TIMEOUT)).await?;
+        let status = resp.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(status_error(status, &Value::Null));
+        }
+        read_capped(resp, MAX_ATTACHMENT + 1024).await
+    }
+
+    /// Adds an attachment: announces it (`attachment/v2`), then uploads the encrypted file
+    /// to this server. `key` and `file_name` are encrypted. Returns the attachment's id.
+    pub async fn upload_attachment(
+        &self,
+        access: &Secret,
+        cipher: Uuid,
+        key: &str,
+        file_name: &str,
+        data: Vec<u8>,
+    ) -> Result<String> {
+        let body = json!({"key": key, "fileName": file_name, "fileSize": data.len(), "adminRequest": false});
+        let req =
+            self.http.post(self.at(&format!("/api/ciphers/{cipher}/attachment/v2"))).bearer_auth(access.expose()).json(&body);
+        let made = expect_ok(self.send(req).await?).await?;
+        // 0: straight to this server. Others (Azure) are the hosted service's.
+        if made["fileUploadType"].as_i64() != Some(0) {
+            return Err(ApiError::Protocol);
+        }
+        let id = made["attachmentId"].as_str().ok_or(ApiError::Protocol)?.to_string();
+        // Without a type, Vaultwarden takes the part for text and stores it re-encoded.
+        let part = reqwest::multipart::Part::bytes(data)
+            .file_name(file_name.to_string())
+            .mime_str("application/octet-stream")
+            .map_err(|_| ApiError::Protocol)?;
+        let form = reqwest::multipart::Form::new().part("data", part);
+        let req = self
+            .http
+            .post(self.at(&format!("/api/ciphers/{cipher}/attachment/{id}")))
+            .bearer_auth(access.expose())
+            .timeout(ATTACHMENT_TIMEOUT)
+            .multipart(form);
+        expect_ok(self.send(req).await?).await?;
+        Ok(id)
+    }
+
+    pub async fn delete_attachment(&self, access: &Secret, cipher: Uuid, attachment: &str) -> Result<()> {
+        let req =
+            self.http.delete(self.at(&format!("/api/ciphers/{cipher}/attachment/{attachment}"))).bearer_auth(access.expose());
+        expect_ok(self.send(req).await?).await.map(|_| ())
+    }
+
     pub async fn trash_cipher(&self, access: &Secret, id: Uuid) -> Result<()> {
         let req = self.http.put(self.at(&format!("/api/ciphers/{id}/delete"))).bearer_auth(access.expose());
         expect_ok(self.send(req).await?).await.map(|_| ())
@@ -480,13 +544,17 @@ fn transport_error(e: reqwest::Error) -> ApiError {
     if e.is_builder() { ApiError::BadServerUrl } else { ApiError::Unreachable }
 }
 
-async fn read_body(mut resp: reqwest::Response) -> Result<Vec<u8>> {
-    if resp.content_length().is_some_and(|n| n > MAX_BODY as u64) {
+async fn read_body(resp: reqwest::Response) -> Result<Vec<u8>> {
+    read_capped(resp, MAX_BODY).await
+}
+
+async fn read_capped(mut resp: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
+    if resp.content_length().is_some_and(|n| n > limit as u64) {
         return Err(ApiError::TooLarge);
     }
     let mut body = Vec::new();
     while let Some(chunk) = resp.chunk().await.map_err(transport_error)? {
-        if body.len() + chunk.len() > MAX_BODY {
+        if body.len() + chunk.len() > limit {
             return Err(ApiError::TooLarge);
         }
         body.extend_from_slice(&chunk);

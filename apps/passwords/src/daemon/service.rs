@@ -190,6 +190,28 @@ impl Service {
         Ok(self.vault.update_item(self.scope, &id, &draft).await?)
     }
 
+    /// An item's attachments as JSON `[{id, name, size}]`.
+    async fn attachments(&self, id: String) -> Result<String, Error> {
+        Ok(self.vault.attachments(self.scope, &id).await?)
+    }
+
+    /// Decrypts an attachment into `file` (a handle to where the user chose to save it);
+    /// returns the bytes written.
+    async fn save_attachment(&self, id: String, attachment: String, file: zbus::zvariant::OwnedFd) -> Result<u64, Error> {
+        let file = std::fs::File::from(std::os::fd::OwnedFd::from(file));
+        Ok(self.vault.save_attachment(self.scope, &id, &attachment, file).await?)
+    }
+
+    /// Encrypts `file` (a handle to the file the user picked) as a new attachment.
+    async fn add_attachment(&self, id: String, name: String, file: zbus::zvariant::OwnedFd) -> Result<(), Error> {
+        let file = std::fs::File::from(std::os::fd::OwnedFd::from(file));
+        Ok(self.vault.add_attachment(self.scope, &id, &name, file).await?)
+    }
+
+    async fn delete_attachment(&self, id: String, attachment: String) -> Result<(), Error> {
+        Ok(self.vault.delete_attachment(self.scope, &id, &attachment).await?)
+    }
+
     async fn trash(&self, id: String) -> Result<(), Error> {
         Ok(self.vault.trash(self.scope, &id, false).await?)
     }

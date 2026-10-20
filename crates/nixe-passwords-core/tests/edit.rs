@@ -598,3 +598,52 @@ fn s_item(s: &Session, id: Uuid, item: &Value) -> Value {
     }
     item
 }
+
+/// Files attached here read back in `bw` byte for byte; files `bw` attached download
+/// here the same; deleting one leaves the rest; an oversized file is refused before
+/// anything is sent.
+#[tokio::test]
+#[ignore = "needs NIXE_PW_TEST_SERVER"]
+async fn attachments_round_trip_with_bw() {
+    let email = common::fresh_email("files");
+    let password = "correct horse files battery";
+    common::register(&email, password, &bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() }).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+    let (mut s, refresh) = signed_in(&mut store, &server, &email, password).await;
+    let bw = common::Bw::login(&email, password);
+
+    let id = s.create_login(&mut store, &server, &refresh, &draft("With files", "canary-files-Pw!9")).await.unwrap();
+    // Every byte value, so nothing is treated as text on the way.
+    let binary: Vec<u8> = (0..=255u8).cycle().take(300_000).collect();
+    s.add_attachment(&mut store, &server, &refresh, id, "backup codes.bin", &binary).await.unwrap();
+    let file = dir.path().join("from-bw.txt");
+    std::fs::write(&file, "canary from bw\n").unwrap();
+    bw.run(&["sync"]);
+    bw.attach(&id.to_string(), &file);
+    s.sync(&mut store, &server, &refresh).await.unwrap();
+
+    assert_eq!(bw.attachment(&id.to_string(), "backup codes.bin"), binary);
+    let listed = s.attachments(id).unwrap();
+    let mut names: Vec<&str> = listed.iter().map(|a| a.name.expose()).collect();
+    names.sort();
+    assert_eq!(names, ["backup codes.bin", "from-bw.txt"]);
+    let theirs = listed.iter().find(|a| a.name.expose() == "from-bw.txt").unwrap();
+    // Encrypted: a type byte, IV and MAC, and the 15 bytes padded to 16.
+    assert_eq!(theirs.size, 65);
+    let got = s.download_attachment(&server, &refresh, id, &theirs.id).await.unwrap();
+    assert_eq!(got.expose(), b"canary from bw\n");
+
+    let ours = listed.iter().find(|a| a.name.expose() == "backup codes.bin").unwrap().id.clone();
+    s.delete_attachment(&mut store, &server, &refresh, id, &ours).await.unwrap();
+    let item = bw.item(&id.to_string());
+    assert_eq!(item["attachments"].as_array().unwrap().len(), 1);
+    assert_eq!(item["login"]["password"], "canary-files-Pw!9");
+
+    let too_big = vec![0u8; nixe_passwords_core::api::MAX_ATTACHMENT + 1];
+    assert!(matches!(
+        s.add_attachment(&mut store, &server, &refresh, id, "big.bin", &too_big).await,
+        Err(SessionError::NotAllowed(_))
+    ));
+}
