@@ -281,11 +281,16 @@ impl Session {
         match (old.organization_id, place.organization) {
             (None, Some(org)) => {
                 let body = self.rekeyed(&old, org)?;
-                let moved = server.share_cipher(access, id, &body, &place.collections).await?;
+                let moved = match server.share_cipher(access, id, &body, &place.collections).await {
+                    Ok(moved) => moved,
+                    Err(e) => return Err(self.settle(store, server, access, id, e).await),
+                };
                 self.take(store, moved)
             }
             (Some(_), Some(_)) if !same_set(&old.collection_ids, &place.collections) => {
-                server.set_collections(access, id, &place.collections).await?;
+                if let Err(e) = server.set_collections(access, id, &place.collections).await {
+                    return Err(self.settle(store, server, access, id, e).await);
+                }
                 let latest = server.get_cipher(access, id).await?;
                 self.take(store, latest)
             }
@@ -344,13 +349,46 @@ impl Session {
         let body = new.to_request(self.snapshot.profile.id, Some(&old.revision_date));
         match server.update_cipher(access, old.id, &body).await {
             Ok(saved) => self.take(store, saved),
-            Err(ApiError::Conflict) => {
-                let latest = server.get_cipher(access, old.id).await?;
-                self.take(store, latest)?;
-                Err(SessionError::Api(ApiError::Conflict))
-            }
-            Err(e) => Err(e.into()),
+            Err(e) => Err(self.settle(store, server, access, old.id, e).await),
         }
+    }
+
+    /// After a call about one item failed: is it still there for this account? If the
+    /// server gives it, its latest copy comes in and the error stands (a conflict among
+    /// them). If the server refuses it (deleted for good, or the account lost access),
+    /// it leaves this copy and the error is `NotFound`. Vaultwarden answers 400 for
+    /// both, not 404. Connection and sign-in failures say nothing about the item.
+    pub(crate) async fn settle(
+        &mut self,
+        store: &mut Store,
+        server: &Server,
+        access: &Secret,
+        id: Uuid,
+        error: ApiError,
+    ) -> SessionError {
+        use ApiError::*;
+        if matches!(error, Unreachable | Timeout | Certificate | Unauthorized | RateLimited | BadServerUrl) {
+            return error.into();
+        }
+        match server.get_cipher(access, id).await {
+            Ok(latest) => match self.take(store, latest) {
+                Ok(()) => error.into(),
+                Err(e) => e,
+            },
+            Err(NotFound | Server { status: 400 | 403 | 404, .. }) => match self.forget(store, id) {
+                Ok(()) => SessionError::Api(NotFound),
+                Err(e) => e,
+            },
+            Err(_) => error.into(),
+        }
+    }
+
+    /// Drops an item from the store, the snapshot and the view.
+    fn forget(&mut self, store: &mut Store, id: Uuid) -> Result<()> {
+        store.remove_cipher(id)?;
+        self.snapshot.ciphers.retain(|c| c.id != id);
+        self.view.remove(id);
+        Ok(())
     }
 
     /// Moves an item to the trash (it can be restored there).
@@ -359,7 +397,9 @@ impl Session {
             return Err(SessionError::NotAllowed("you can't delete this item"));
         }
         let access = Secret::new(self.access(server, refresh).await?.expose());
-        server.trash_cipher(&access, id).await?;
+        if let Err(e) = server.trash_cipher(&access, id).await {
+            return Err(self.settle(store, server, &access, id, e).await);
+        }
         let trashed = server.get_cipher(&access, id).await?;
         self.take(store, trashed)
     }
@@ -369,7 +409,10 @@ impl Session {
             return Err(SessionError::NotAllowed("you can't restore this item"));
         }
         let access = Secret::new(self.access(server, refresh).await?.expose());
-        let restored = server.restore_cipher(&access, id).await?;
+        let restored = match server.restore_cipher(&access, id).await {
+            Ok(restored) => restored,
+            Err(e) => return Err(self.settle(store, server, &access, id, e).await),
+        };
         self.take(store, restored)
     }
 

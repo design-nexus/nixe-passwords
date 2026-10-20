@@ -120,6 +120,14 @@ shows both versions. Nothing is overwritten silently. Deleting moves the item to
 trash (`PUT /api/ciphers/{id}/delete`). Edits need a connection; offline edits wait for
 a later phase.
 
+**When the server disagrees:** a call about one item that fails (an edit, a move,
+trash or restore, an attachment) asks the server for that item. If it comes back, its
+latest copy replaces this one and the error stands (a conflict, for an edit made
+elsewhere meanwhile). If the server refuses it, because it was deleted for good or the
+account lost access, it leaves the local copy at once, store included, and the error
+is `NotFound`. The window then reloads and says so. Vaultwarden answers 400, not 404,
+for both.
+
 **Rules for edits:**
 - **New items:** created under the user key, without an item key of their own.
   Official clients don't create per-item keys against Vaultwarden either. Items that

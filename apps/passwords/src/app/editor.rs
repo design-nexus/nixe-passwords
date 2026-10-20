@@ -737,7 +737,12 @@ fn submit(ui: &Ui, form: &Rc<Form>, id: Option<String>, dialog: &gtk::Window, sa
                 ));
                 ui::reload(&ui);
             }
-            Err(e) => detail::handle(&ui, e, || {}),
+            Err(e) => {
+                if e.is(Code::NotFound) {
+                    dialog.close();
+                }
+                detail::handle(&ui, e, || {});
+            }
         }
     });
 }

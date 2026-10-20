@@ -632,7 +632,7 @@ async fn attachments_round_trip_with_bw() {
     let theirs = listed.iter().find(|a| a.name.expose() == "from-bw.txt").unwrap();
     // Encrypted: a type byte, IV and MAC, and the 15 bytes padded to 16.
     assert_eq!(theirs.size, 65);
-    let got = s.download_attachment(&server, &refresh, id, &theirs.id).await.unwrap();
+    let got = s.download_attachment(&mut store, &server, &refresh, id, &theirs.id).await.unwrap();
     assert_eq!(got.expose(), b"canary from bw\n");
 
     let ours = listed.iter().find(|a| a.name.expose() == "backup codes.bin").unwrap().id.clone();

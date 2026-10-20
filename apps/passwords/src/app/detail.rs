@@ -407,6 +407,11 @@ pub fn copy_selected(ui: &Ui, field: &str) {
 pub fn handle(ui: &Ui, e: Fail, retry: impl Fn() + 'static) {
     if e.is(Code::Reprompt) {
         account::confirm(ui, retry);
+    } else if e.is(Code::NotFound) {
+        // Deleted elsewhere, or no longer shared with this account: the daemon has
+        // dropped it, so the list catches up.
+        ui::reload(ui);
+        ui::toast(ui, "That item is gone: deleted elsewhere, or no longer shared with you.");
     } else if e.is(Code::Locked) {
         ui::set_state(ui, nixe_passwords_proto::state::LOCKED);
     } else {
@@ -428,7 +433,7 @@ fn set_trashed(ui: &Ui, id: &str, trash: bool) {
                     ui::toast(&ui, "Restored.");
                 }
             }
-            Err(e) => ui::toast(&ui, &e.to_string()),
+            Err(e) => handle(&ui, e, || {}),
         }
     });
 }

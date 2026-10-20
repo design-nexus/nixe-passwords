@@ -127,6 +127,29 @@ pub async fn create_collection(access: &str, org: &Org, name: &str) -> String {
     made["id"].as_str().expect("collection created").to_string()
 }
 
+/// Removes a member from the organization (test fixture: an owner does this in the web
+/// vault).
+pub async fn remove_member(access: &str, org: &Org, email: &str) {
+    let http = http();
+    let members: Value = http
+        .get(format!("{}/api/organizations/{}/users", server_url(), org.id))
+        .bearer_auth(access)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let member = members["data"].as_array().unwrap().iter().find(|m| m["email"] == email).expect("a member");
+    let resp = http
+        .delete(format!("{}/api/organizations/{}/users/{}", server_url(), org.id, member["id"].as_str().unwrap()))
+        .bearer_auth(access)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "remove member: {}", resp.status());
+}
+
 /// Makes an existing account a member (a plain user) with access to `collections`, given
 /// as `(id, read_only, hide_passwords)`, and confirms it. The test server sends no
 /// mail, so an invited account is accepted at once.

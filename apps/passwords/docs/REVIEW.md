@@ -61,6 +61,25 @@ The daemon's own frame handling needs a running vault and isn't fuzzed directly;
 it does with a frame before anything else is the JSON parse (size-limited) and the two
 calls `pairing` covers.
 
+### Test matrix (2026-10-20)
+
+`crates/nixe-passwords-core/tests/matrix.rs`, live against the test server with `bw`
+or the API as the other side:
+
+- **Trashed elsewhere:** an edit from the stale copy is refused as a conflict and the
+  trashed state comes in.
+- **Deleted for good elsewhere:** edits and trash were refused with "Cipher doesn't
+  exist" (a 400 from Vaultwarden, not 404), and the item stayed in this copy until the
+  next sync. **Fixed:** the core asks the server for the item after a failed call and
+  drops it when the server refuses it, store included.
+- **Edited elsewhere at the same time:** a card's edit is refused as a conflict and the
+  other edit comes in (logins were already covered).
+- **Removed from an organization:** an edit from the stale copy is refused and the item
+  leaves at once (it stayed until the next sync before the fix above); the next sync
+  drops the organization's collections; the local copy agrees offline.
+- **Server unreachable:** create, edit, trash and sync fail as `Unreachable`, nothing
+  local changes, and the vault still unlocks and reads.
+
 ### Left open
 
 - The extension in Firefox, Chromium and Brave, and the web vault check, need hands.

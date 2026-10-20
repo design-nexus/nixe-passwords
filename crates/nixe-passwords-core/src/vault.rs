@@ -189,6 +189,11 @@ impl View {
         self.sort();
     }
 
+    /// Drops one item: the server no longer gives it to this account.
+    pub fn remove(&mut self, id: Uuid) {
+        self.entries.retain(|e| e.id != id);
+    }
+
     pub fn get(&self, id: Uuid) -> Option<&Entry> {
         self.entries.iter().find(|e| e.id == id)
     }

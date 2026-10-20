@@ -724,7 +724,7 @@ impl Vault {
             let (server, refresh) = online(st)?;
             let session = st.session.as_mut().ok_or_else(locked)?;
             st.last_used = Instant::now();
-            session.download_attachment(&server, &refresh, id, attachment).await?
+            session.download_attachment(&mut st.store, &server, &refresh, id, attachment).await?
         };
         tokio::task::spawn_blocking(move || {
             use std::io::Write;

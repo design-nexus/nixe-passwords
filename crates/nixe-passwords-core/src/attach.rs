@@ -37,6 +37,7 @@ impl Session {
     /// Downloads and decrypts one attachment.
     pub async fn download_attachment(
         &mut self,
+        store: &mut Store,
         server: &Server,
         refresh: &Secret,
         id: Uuid,
@@ -48,7 +49,10 @@ impl Session {
             a["key"].as_str().map(str::to_string)
         };
         let access = Secret::new(self.access(server, refresh).await?.expose());
-        let data = server.download_attachment(&access, id, attachment).await?;
+        let data = match server.download_attachment(&access, id, attachment).await {
+            Ok(data) => data,
+            Err(e) => return Err(self.settle(store, server, &access, id, e).await),
+        };
         let c = self.cipher(id)?;
         let mut key = self.keys.item(c.organization_id, c.key.as_deref())?;
         Ok(key.decrypt_file(wrapped.as_deref(), &data)?)
@@ -77,7 +81,9 @@ impl Session {
             (wrapped, key.encrypt(name)?, encrypted)
         };
         let access = Secret::new(self.access(server, refresh).await?.expose());
-        server.upload_attachment(&access, id, &wrapped, &file_name, encrypted).await?;
+        if let Err(e) = server.upload_attachment(&access, id, &wrapped, &file_name, encrypted).await {
+            return Err(self.settle(store, server, &access, id, e).await);
+        }
         let latest = server.get_cipher(&access, id).await?;
         self.take(store, latest)
     }
@@ -94,7 +100,9 @@ impl Session {
             return Err(SessionError::NotAllowed("this item is read-only for you"));
         }
         let access = Secret::new(self.access(server, refresh).await?.expose());
-        server.delete_attachment(&access, id, attachment).await?;
+        if let Err(e) = server.delete_attachment(&access, id, attachment).await {
+            return Err(self.settle(store, server, &access, id, e).await);
+        }
         let latest = server.get_cipher(&access, id).await?;
         self.take(store, latest)
     }
