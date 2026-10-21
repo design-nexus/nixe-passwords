@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- music pdf
 #   curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- all
 #
-# Apps: settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather capture
+# Apps: settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture
 # Options:
 #   --default  make the installed apps open their file types
 #   --gear     also add the Settings gear to the Omarchy bar (with settings)
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 REPO="design-nexus/nixe"
-ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather capture)
+ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture)
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m==>\033[0m %s\n' "$*" >&2; }
@@ -41,6 +41,7 @@ app_info() {
     fonts) ids="Fonts" old_bins="fonts" deps="fontconfig pango tar xz" ;;
     archive) ids="Archive" old_bins="archive" deps="7zip" defaults=true ;;
     weather) ids="Weather" ;;
+    news) ids="News" deps="libsecret" bins="nixe-news nixe-news-glimpse" ;;
     capture) ids="Capture" deps="grim wl-clipboard tesseract gtk4-layer-shell tesseract-data-eng" bins="nixe-capture nixe-capture-glimpse" ;;
     office)
       bins="nixe-office nixe-write nixe-sheets nixe-present" ids="Write Sheets Present" defaults=true
@@ -156,7 +157,7 @@ else
   dirs=(crates bin)
   for a in "${apps[@]}"; do app_info "$a"; dirs+=("apps/$dir"); done
   # Their Glimpse plugins build alongside them (see the Build step).
-  for a in capture; do
+  for a in news capture; do
     if [[ " ${apps[*]} " == *" $a "* ]]; then dirs+=("apps/$a-glimpse"); fi
   done
   git -C "$work/src" sparse-checkout set "${dirs[@]}"
@@ -175,6 +176,7 @@ if [[ $prebuilt == false ]]; then
   pkgs=()
   for a in "${apps[@]}"; do app_info "$a"; pkgs+=(-p "$pkg"); done
   if [[ " ${apps[*]} " == *" settings "* ]]; then pkgs+=(-p nixe-goa-helper); fi
+  if [[ " ${apps[*]} " == *" news "* ]]; then pkgs+=(-p nixe-news-glimpse); fi
   if [[ " ${apps[*]} " == *" capture "* ]]; then pkgs+=(-p nixe-capture-glimpse); fi
   say "Building ${apps[*]} (a few minutes the first time)"
   (cd "$src" && cargo build --release "${locked[@]}" "${pkgs[@]}")
@@ -210,6 +212,12 @@ for a in "${apps[@]}"; do
   done
   for f in "$d"/data/io.github.design_nexus.nixe.*.desktop; do install -m 644 "$f" "$desk/"; done
   for id in $ids; do install -m 644 "$src/crates/nixe-icons/apps/io.github.design_nexus.nixe.$id.svg" "$icons/"; done
+  if [[ $a == news && -f $src/target/release/nixe-news-glimpse ]]; then
+    plug="$share/nixe-news/glimpse"
+    mkdir -p "$plug"
+    install -m 755 "$src/target/release/nixe-news-glimpse" "$plug/nixe-news-glimpse"
+    install -m 644 "$src/apps/news-glimpse/plugin.toml" "$plug/plugin.toml"
+  fi
   if [[ $a == capture && -f $src/target/release/nixe-capture-glimpse ]]; then
     plug="$share/nixe-capture/glimpse"
     mkdir -p "$plug"
@@ -329,6 +337,9 @@ if [[ " ${apps[*]} " != " glimpse " && -f $hypr/hyprland.lua ]] && grep -q 'o\.w
   [[ -x $bin/nixe-notepad ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Notepad$", { float = true, center = true, size = { 900, 700 } })'$'\n'
   [[ -x $bin/nixe-capture ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Capture\\.Pin$", { float = true, pin = true, size = { 480, 320 } })'$'\n'
   [[ -x $bin/nixe-archive ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Archive$", { float = true, center = true, size = { 960, 640 } })'$'\n'
+  if [[ -x $bin/nixe-weather ]] && grep -q '^float_window *= *true' "$config/nixe-weather/settings.toml" 2>/dev/null; then
+    rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Weather$", { float = true, center = true, size = { 460, 720 } })'$'\n'
+  fi
   # Weather writes its own rule into nixe.lua when it's set to float, so the file
   # must be loaded even while no rule is in it yet.
   if [[ -n $rules || -x $bin/nixe-weather ]]; then

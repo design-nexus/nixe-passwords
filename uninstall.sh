@@ -5,7 +5,7 @@
 #   ./uninstall.sh all --purge        remove every app and its settings and data
 set -euo pipefail
 
-ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather capture)
+ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture)
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 
@@ -32,6 +32,7 @@ for a in "${apps[@]}"; do
     office) bins="nixe-office nixe-write nixe-sheets nixe-present" ids="Write Sheets Present" ;;
     photos) bins="nixe-photos nixe-viewer" ids="Photos PhotoViewer" ;;
     pdf) bins="nixe-pdf" ids="Pdf" ;;
+    news) bins="nixe-news nixe-news-glimpse" ids="News" ;;
     capture) bins="nixe-capture nixe-capture-glimpse" ids="Capture" ;;
     *) bins="nixe-$a" ids="${a^}" ;;
   esac
@@ -85,6 +86,7 @@ hypr="$config/hypr/nixe.lua"
 if [[ " ${apps[*]} " != " glimpse " && -f $hypr ]]; then
   [[ -x $bin/nixe-notepad ]] || sed -i '/nixe\\\\.Notepad/d' "$hypr"
   [[ -x $bin/nixe-archive ]] || sed -i '/nixe\\\\.Archive/d' "$hypr"
+  [[ -x $bin/nixe-weather ]] || sed -i '/nixe\\\\.Weather/d' "$hypr"
   [[ -x $bin/nixe-capture ]] || sed -i '/nixe\\\\.Capture\\\\.Pin/d' "$hypr"
   if ! grep -q 'o\.window' "$hypr"; then
     rm -f "$hypr"
