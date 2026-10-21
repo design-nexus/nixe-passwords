@@ -16,6 +16,10 @@ jobs:
       CARGO_BUILD_JOBS: '2'
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Prepare Git checkout
+        run: |
+          printf 'Server = https://archive.archlinux.org/repos/2026/10/20/$repo/os/$arch\n' > /etc/pacman.d/mirrorlist
+          pacman -Syyuu --noconfirm --needed git
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
