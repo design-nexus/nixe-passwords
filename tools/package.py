@@ -39,6 +39,9 @@ def main():
         for command in spec.get('prepare', []):
             run(*command)
         command = ['cargo', 'build', '--release', '--locked', '--manifest-path', str(manifest)]
+        for feature in os.environ.get('NIXE_BUILD_FEATURES', '').split(','):
+            if feature:
+                command += ['--features', feature]
         for package in spec['packages']:
             command += ['-p', package]
         run(*command)
@@ -65,6 +68,28 @@ def main():
             if not source.is_file():
                 raise RuntimeError(f'Missing native runtime resource {source}')
             resources['target/native/ntgcalls/' + name] = source
+    if spec['application'] == 'git':
+        run('env', 'NIXE_SKIP_BUILD=1', 'bash', 'apps/git/packaging/build.sh')
+        (ROOT / 'dist').mkdir(exist_ok=True)
+        for source in (Path(metadata['target_directory']) / 'packages').glob('*.pkg.tar.zst'):
+            resources['dist/' + source.name] = source
+            shutil.copy2(source, ROOT / 'dist' / source.name)
+    if spec['application'] == 'assistant':
+        for name in list(resources):
+            if name.startswith('target/release/'):
+                resources['apps/assistant/' + name] = resources.pop(name)
+        for name in ['libonnxruntime_providers_cuda.so', 'libonnxruntime_providers_shared.so']:
+            source = Path(metadata['target_directory']) / 'release' / name
+            if source.exists():
+                resources['apps/assistant/target/release/' + name] = source
+    revision = run('git', 'rev-parse', 'HEAD', capture=True)
+    build_info = {'revision': revision, 'application': spec['application'],
+                  'rustc': run('rustc', '--version', capture=True),
+                  'cargo': run('cargo', '--version', capture=True),
+                  'target': platform.machine(), 'features': os.environ.get('NIXE_BUILD_FEATURES', ''),
+                  'environment': json.loads((ROOT / 'build-environment.json').read_text())}
+    (ROOT / 'dist').mkdir(exist_ok=True)
+    (ROOT / 'dist/build-info.json').write_text(json.dumps(build_info, indent=2) + '\n')
     epoch = int(os.environ.get('SOURCE_DATE_EPOCH', run('git', 'log', '-1', '--format=%ct', capture=True)))
     output = ROOT / 'dist' / f"{spec['application']}-{platform.machine()}.tar.gz"
     output.parent.mkdir(exist_ok=True)

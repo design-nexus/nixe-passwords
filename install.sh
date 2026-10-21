@@ -12,7 +12,9 @@
 set -euo pipefail
 
 REPO="design-nexus/nixe-passwords"
+asroot() { if [[ -t 0 ]]; then sudo "$@"; else pkexec "$@"; fi; }
 ALL=(passwords)
+(($#)) || set -- passwords
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m==>\033[0m %s\n' "$*" >&2; }
@@ -122,7 +124,7 @@ locked=(--locked)
 # A release built by CI, for an app: its tag, or nothing.
 release_tag() {
   curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100" 2>/dev/null |
-    grep -o "\"tag_name\": *\"$1-v[^\"]*\"" | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
+    python3 -c 'import json,sys; print(next((r["tag_name"] for r in json.load(sys.stdin) if not r["draft"] and not r["prerelease"]), ""))'
 }
 
 # The assistant builds and installs itself (CUDA, its own services and binds).
@@ -137,6 +139,7 @@ if [[ " ${apps[*]} " == *" assistant "* ]]; then
   fi
   command -v cargo >/dev/null || die "Rust (cargo) is needed to build the assistant."
   say "Building and installing the assistant (it takes a while the first time)"
+  if [[ -f $here/.prebuilt ]]; then export SKIP_BUILD=1; fi
   "$asrc/scripts/install.sh"
   ((${#apps[@]})) || exit 0
 fi
@@ -153,7 +156,7 @@ elif [[ ${NIXE_BUILD:-} != 1 ]] && tags=$(for a in "${apps[@]}"; do t=$(release_
   src="$work/src"
   mkdir -p "$src"
   for t in $tags; do
-    curl -fsSL "https://github.com/$REPO/releases/download/$t/${t%-v*}-x86_64.tar.gz" | tar -xz -C "$src"
+    curl -fsSL "https://github.com/$REPO/releases/download/$t/passwords-x86_64.tar.gz" | tar -xz -C "$src"
   done
   prebuilt=true
 else
@@ -255,9 +258,9 @@ for a in "${apps[@]}"; do
 
   if [[ $a == store ]]; then
     say "Installing Store's root-owned package helper and authorization policy"
-    sudo install -d -m 755 /usr/local/lib/nixe-store /var/lib/nixe-store
-    sudo install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nixe-store-helper" /usr/local/lib/nixe-store/nixe-store-helper
-    sudo install -m 644 "$d/data/io.github.design_nexus.nixe.store.policy" /usr/share/polkit-1/actions/io.github.design_nexus.nixe.store.policy
+    asroot install -d -m 755 /usr/local/lib/nixe-store /var/lib/nixe-store
+    asroot install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nixe-store-helper" /usr/local/lib/nixe-store/nixe-store-helper
+    asroot install -m 644 "$d/data/io.github.design_nexus.nixe.store.policy" /usr/share/polkit-1/actions/io.github.design_nexus.nixe.store.policy
     # The privileged entry point is never executed from a user-writable directory.
     rm -f "$bin/nixe-store-helper"
   fi
@@ -313,7 +316,7 @@ description = "Local search, sources, semantic models, plugins, and privacy."
 exec = "nixe-glimpse-settings"
 MANIFEST
     done
-    [[ ! -f $config/hypr/hyprland.lua ]] || "$bin/nixe-glimpse" integration window
+    [[ ${NIXE_SKIP_INTEGRATION:-0} == 1 || ! -f $config/hypr/hyprland.lua ]] || "$bin/nixe-glimpse" integration window
   fi
 
   # The same app from before the rename.
@@ -354,7 +357,7 @@ gtk-update-icon-cache -q "$share/icons/hicolor" 2>/dev/null || true
 
 # ---------- Hyprland: windows that open floating ----------
 hypr="$config/hypr"
-if [[ " ${apps[*]} " != " glimpse " && -f $hypr/hyprland.lua ]] && grep -q 'o\.window' "$hypr/hyprland.lua" 2>/dev/null; then
+if [[ ${NIXE_SKIP_INTEGRATION:-0} != 1 && " ${apps[*]} " != " glimpse " && -f $hypr/hyprland.lua ]] && grep -q 'o\.window' "$hypr/hyprland.lua" 2>/dev/null; then
   rules=""
   [[ -x $bin/nixe-notepad ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Notepad$", { float = true, center = true, size = { 900, 700 } })'$'\n'
   [[ -x $bin/nixe-capture ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Capture\\.Pin$", { float = true, pin = true, size = { 480, 320 } })'$'\n'
