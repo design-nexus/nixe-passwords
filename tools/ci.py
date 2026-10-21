@@ -17,3 +17,5 @@ subprocess.run(command, cwd=root, check=True)
 for command in spec['test_commands']:
     subprocess.run(command, cwd=root, check=True)
 subprocess.run(['python3', 'tools/package.py', '--no-build'], cwd=root, check=True)
+
+subprocess.run(['python3', 'tools/release-notes.py'], cwd=root, check=True)
