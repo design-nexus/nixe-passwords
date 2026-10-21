@@ -1,20 +1,24 @@
-name: Standalone check
-# Enable PR/push events only after publication readiness passes.
+name: Independent application checks
+# Remains manual until approved immutable remote dependencies are published.
 on: workflow_dispatch
 permissions:
   contents: read
 jobs:
-  check:
+  application:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Publication prerequisite
+      - name: Dependency publication gate
         run: |
           if grep -R 'file://' --include='Cargo.toml' .; then
-            echo 'Local pilot: replace dependencies before enabling hosted CI.'
+            echo 'Local split: publish pinned dependency sources first.'
             exit 1
           fi
       - name: Build prerequisites
-        run: pacman -Syu --noconfirm --needed base-devel rust gtk4 pkgconf git
-      - run: cargo check --locked --workspace
+        run: |
+          source <(sed -n '/^app_info()/,/^}/p' install.sh)
+          app_info passwords
+          pacman -Syu --noconfirm --needed base-devel rust python git gtk4 pkgconf cmake ninja clang $deps
+      - name: Locked build, targeted tests and package
+        run: python3 tools/ci.py
