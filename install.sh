@@ -12,7 +12,7 @@
 set -euo pipefail
 
 REPO="design-nexus/nixe"
-ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture pulse)
+ALL=(passwords)
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m==>\033[0m %s\n' "$*" >&2; }
@@ -63,6 +63,8 @@ app_info() {
 }
 
 # ---------- Arguments ----------
+# This standalone checkout installs only its owning application.
+if [[ $# == 0 || ${1:-} == --* ]]; then set -- passwords "$@"; fi
 apps=() make_default=false gear=false
 for a in "$@"; do
   case $a in
@@ -78,6 +80,10 @@ for a in "$@"; do
 done
 ((${#apps[@]})) || die "Name the apps to install (or 'all'): ${ALL[*]}"
 mapfile -t apps < <(printf '%s\n' "${apps[@]}" | awk '!seen[$0]++')
+
+for selected in "${apps[@]}"; do
+  [[ $selected == passwords ]] || die "This repository installs only passwords."
+done
 
 command -v hyprctl >/dev/null || warn "Hyprland wasn't found. Nixe apps are made for Omarchy (Hyprland), but run elsewhere too."
 
@@ -207,24 +213,24 @@ for a in "${apps[@]}"; do
   d="$src/apps/$dir"
   say "Installing $a"
   for b in $bins; do
-    if [[ -f $src/target/release/$b ]]; then
-      install -m 755 "$src/target/release/$b" "$bin/$b"
+    if [[ -f ${CARGO_TARGET_DIR:-$src/target}/release/$b ]]; then
+      install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/$b" "$bin/$b"
     elif [[ -f $d/packaging/$b ]]; then
       install -m 755 "$d/packaging/$b" "$bin/$b"
     fi
   done
   for f in "$d"/data/io.github.design_nexus.nixe.*.desktop; do install -m 644 "$f" "$desk/"; done
   for id in $ids; do install -m 644 "$src/crates/nixe-icons/apps/io.github.design_nexus.nixe.$id.svg" "$icons/"; done
-  if [[ $a == news && -f $src/target/release/nixe-news-glimpse ]]; then
+  if [[ $a == news && -f ${CARGO_TARGET_DIR:-$src/target}/release/nixe-news-glimpse ]]; then
     plug="$share/nixe-news/glimpse"
     mkdir -p "$plug"
-    install -m 755 "$src/target/release/nixe-news-glimpse" "$plug/nixe-news-glimpse"
+    install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nixe-news-glimpse" "$plug/nixe-news-glimpse"
     install -m 644 "$src/apps/news-glimpse/plugin.toml" "$plug/plugin.toml"
   fi
-  if [[ $a == capture && -f $src/target/release/nixe-capture-glimpse ]]; then
+  if [[ $a == capture && -f ${CARGO_TARGET_DIR:-$src/target}/release/nixe-capture-glimpse ]]; then
     plug="$share/nixe-capture/glimpse"
     mkdir -p "$plug"
-    install -m 755 "$src/target/release/nixe-capture-glimpse" "$plug/nixe-capture-glimpse"
+    install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nixe-capture-glimpse" "$plug/nixe-capture-glimpse"
     install -m 644 "$src/apps/capture-glimpse/plugin.toml" "$plug/plugin.toml"
   fi
   if [[ $a == pulse ]]; then
@@ -235,10 +241,10 @@ for a in "${apps[@]}"; do
     if [[ ! -f "$share/nixe/lib/libtdjson.so" && -f "$HOME/.local/share/nixe/lib/libtdjson.so" ]]; then
       install -m 755 "$HOME/.local/share/nixe/lib/libtdjson.so" "$share/nixe/lib/libtdjson.so"
     fi
-    if [[ -f $src/target/release/nixe-pulse-glimpse ]]; then
+    if [[ -f ${CARGO_TARGET_DIR:-$src/target}/release/nixe-pulse-glimpse ]]; then
       plug="$share/nixe-pulse/glimpse"
       mkdir -p "$plug"
-      install -m 755 "$src/target/release/nixe-pulse-glimpse" "$plug/nixe-pulse-glimpse"
+      install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nixe-pulse-glimpse" "$plug/nixe-pulse-glimpse"
       install -m 644 "$src/apps/pulse-glimpse/plugin.toml" "$plug/plugin.toml"
     fi
   fi
@@ -252,7 +258,7 @@ for a in "${apps[@]}"; do
   if [[ $a == store ]]; then
     say "Installing Store's root-owned package helper and authorization policy"
     sudo install -d -m 755 /usr/local/lib/nixe-store /var/lib/nixe-store
-    sudo install -m 755 "$src/target/release/nixe-store-helper" /usr/local/lib/nixe-store/nixe-store-helper
+    sudo install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nixe-store-helper" /usr/local/lib/nixe-store/nixe-store-helper
     sudo install -m 644 "$d/data/io.github.design_nexus.nixe.store.policy" /usr/share/polkit-1/actions/io.github.design_nexus.nixe.store.policy
     # The privileged entry point is never executed from a user-writable directory.
     rm -f "$bin/nixe-store-helper"
@@ -264,7 +270,7 @@ for a in "${apps[@]}"; do
     install -m 644 "$d/data/nixe-passwords.service" "$config/systemd/user/nixe-passwords.service"
     systemctl --user daemon-reload 2>/dev/null || true
     # A running vault restarts on the new build, which locks it.
-    systemctl --user try-restart nixe-passwords.service 2>/dev/null || true
+    # Leave the running vault untouched; the new binary is used at its next start.
     for host in nixe-settings settings; do
       ext="$share/$host/extensions/passwords"
       mkdir -p "$ext"
@@ -343,7 +349,7 @@ MANIFEST
 done
 
 # The suite's own command: nixe list, install, update, uninstall.
-install -m 755 "$src/bin/nixe" "$bin/nixe"
+[[ -x $bin/nixe ]] || install -m 755 "$src/bin/nixe" "$bin/nixe"
 
 update-desktop-database "$desk" 2>/dev/null || true
 gtk-update-icon-cache -q "$share/icons/hicolor" 2>/dev/null || true

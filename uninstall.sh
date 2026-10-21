@@ -5,10 +5,11 @@
 #   ./uninstall.sh all --purge        remove every app and its settings and data
 set -euo pipefail
 
-ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture pulse)
+ALL=(passwords)
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 
+if [[ $# == 0 || ${1:-} == --* ]]; then set -- passwords "$@"; fi
 apps=() purge=false
 for a in "$@"; do
   case $a in
@@ -21,6 +22,9 @@ for a in "$@"; do
 done
 ((${#apps[@]})) || die "Name the apps to remove (or 'all'): ${ALL[*]}"
 
+for selected in "${apps[@]}"; do
+  [[ $selected == passwords ]] || die "This repository removes only passwords."
+done
 bin="$HOME/.local/bin"
 share="${XDG_DATA_HOME:-$HOME/.local/share}"
 config="${XDG_CONFIG_HOME:-$HOME/.config}"

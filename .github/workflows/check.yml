@@ -1,0 +1,20 @@
+name: Standalone check
+# Enable PR/push events only after publication readiness passes.
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publication prerequisite
+        run: |
+          if grep -R 'file://' --include='Cargo.toml' .; then
+            echo 'Local pilot: replace dependencies before enabling hosted CI.'
+            exit 1
+          fi
+      - name: Build prerequisites
+        run: pacman -Syu --noconfirm --needed base-devel rust gtk4 pkgconf git
+      - run: cargo check --locked --workspace

@@ -9,9 +9,9 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-nixe-core = { path = "../../crates/nixe-core" }
-nixe-theme = { path = "../../crates/nixe-theme" }
-nixe-ui = { path = "../../crates/nixe-ui" }
+nixe-core = { git = "file:///home/ken/Projects/nixe-migration-97c1899-reviewed/nixe-core", rev = "e4595e68a4fd9b44bd15e95311ace1d0fb669bc4" }
+nixe-theme = { git = "file:///home/ken/Projects/nixe-migration-97c1899-reviewed/nixe-design", rev = "6997fb93fe248e20a19277dbd3ef219cdba18683" }
+nixe-ui = { git = "file:///home/ken/Projects/nixe-migration-97c1899-reviewed/nixe-design", rev = "6997fb93fe248e20a19277dbd3ef219cdba18683" }
 gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
 nixe-passwords-core = { path = "../../crates/nixe-passwords-core" }
 nixe-passwords-proto = { path = "../../crates/nixe-passwords-proto", features = ["client"] }

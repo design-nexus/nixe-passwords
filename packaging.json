@@ -1,0 +1,10 @@
+{
+  "application": "passwords",
+  "directory": "passwords",
+  "packages": [
+    "nixe-passwords"
+  ],
+  "manifest": "Cargo.toml",
+  "prepare": [],
+  "binaries": []
+}

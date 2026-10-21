@@ -1,15 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["apps/*", "crates/*"]
-# Built on their own: the extensions (from a sparse clone on the user's machine)
-# and the assistant (CUDA and its own build settings).
-exclude = ["extensions", "apps/assistant", "apps/glimpse/inference"]
+members = ["apps/passwords", "crates/nixe-passwords-core", "crates/nixe-passwords-proto"]
 
 [workspace.package]
 edition = "2024"
 license = "MIT"
 authors = ["Ken Smith"]
-repository = "https://github.com/design-nexus/nixe"
+repository = "https://github.com/design-nexus/nixe-passwords"
 
 [profile.release]
 lto = "thin"
