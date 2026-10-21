@@ -5,7 +5,7 @@
 #   ./uninstall.sh all --purge        remove every app and its settings and data
 set -euo pipefail
 
-ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture)
+ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture pulse)
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 
@@ -34,6 +34,7 @@ for a in "${apps[@]}"; do
     pdf) bins="nixe-pdf" ids="Pdf" ;;
     news) bins="nixe-news nixe-news-glimpse" ids="News" ;;
     capture) bins="nixe-capture nixe-capture-glimpse" ids="Capture" ;;
+    pulse) bins="nixe-pulse nixe-pulse-glimpse" ids="Pulse" ;;
     *) bins="nixe-$a" ids="${a^}" ;;
   esac
   if [[ $a == glimpse ]]; then

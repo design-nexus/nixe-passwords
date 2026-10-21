@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- music pdf
 #   curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- all
 #
-# Apps: settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture
+# Apps: settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture pulse
 # Options:
 #   --default  make the installed apps open their file types
 #   --gear     also add the Settings gear to the Omarchy bar (with settings)
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 REPO="design-nexus/nixe"
-ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture)
+ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture pulse)
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m==>\033[0m %s\n' "$*" >&2; }
@@ -43,6 +43,7 @@ app_info() {
     weather) ids="Weather" ;;
     news) ids="News" deps="libsecret" bins="nixe-news nixe-news-glimpse" ;;
     capture) ids="Capture" deps="grim wl-clipboard tesseract gtk4-layer-shell tesseract-data-eng" bins="nixe-capture nixe-capture-glimpse" ;;
+    pulse) ids="Pulse" bins="nixe-pulse nixe-pulse-glimpse" deps="mpv ffmpeg tlottie libsecret clang unzip gstreamer gst-plugins-base gst-plugins-good gst-plugin-pipewire libcanberra geoclue webkit2gtk-4.1 python-gobject libfido2" ;;
     office)
       bins="nixe-office nixe-write nixe-sheets nixe-present" ids="Write Sheets Present" defaults=true
       deps="gtksourceview5 libspelling hunspell hunspell-en_us"
@@ -157,7 +158,7 @@ else
   dirs=(crates bin)
   for a in "${apps[@]}"; do app_info "$a"; dirs+=("apps/$dir"); done
   # Their Glimpse plugins build alongside them (see the Build step).
-  for a in news capture; do
+  for a in news capture pulse; do
     if [[ " ${apps[*]} " == *" $a "* ]]; then dirs+=("apps/$a-glimpse"); fi
   done
   git -C "$work/src" sparse-checkout set "${dirs[@]}"
@@ -178,6 +179,8 @@ if [[ $prebuilt == false ]]; then
   if [[ " ${apps[*]} " == *" settings "* ]]; then pkgs+=(-p nixe-goa-helper); fi
   if [[ " ${apps[*]} " == *" news "* ]]; then pkgs+=(-p nixe-news-glimpse); fi
   if [[ " ${apps[*]} " == *" capture "* ]]; then pkgs+=(-p nixe-capture-glimpse); fi
+  if [[ " ${apps[*]} " == *" pulse "* ]]; then pkgs+=(-p nixe-pulse-glimpse); fi
+  if [[ " ${apps[*]} " == *" pulse "* ]]; then "$src/apps/pulse/packaging/prepare-native.sh"; fi
   say "Building ${apps[*]} (a few minutes the first time)"
   (cd "$src" && cargo build --release "${locked[@]}" "${pkgs[@]}")
 fi
@@ -223,6 +226,21 @@ for a in "${apps[@]}"; do
     mkdir -p "$plug"
     install -m 755 "$src/target/release/nixe-capture-glimpse" "$plug/nixe-capture-glimpse"
     install -m 644 "$src/apps/capture-glimpse/plugin.toml" "$plug/plugin.toml"
+  fi
+  if [[ $a == pulse ]]; then
+    mkdir -p "$share/nixe/lib"
+    install -m 755 "$src/target/native/ntgcalls/lib/libntgcalls.so" "$share/nixe/lib/libntgcalls.so"
+    install -m 644 "$src/target/native/ntgcalls/THIRD_PARTY_NOTICES.md" "$share/nixe/lib/NTGCALLS-NOTICES.md"
+    install -m 644 "$src/crates/nixe-telegram-calls/native/NTGCALLS-LICENSE" "$share/nixe/lib/NTGCALLS-LICENSE"
+    if [[ ! -f "$share/nixe/lib/libtdjson.so" && -f "$HOME/.local/share/nixe/lib/libtdjson.so" ]]; then
+      install -m 755 "$HOME/.local/share/nixe/lib/libtdjson.so" "$share/nixe/lib/libtdjson.so"
+    fi
+    if [[ -f $src/target/release/nixe-pulse-glimpse ]]; then
+      plug="$share/nixe-pulse/glimpse"
+      mkdir -p "$plug"
+      install -m 755 "$src/target/release/nixe-pulse-glimpse" "$plug/nixe-pulse-glimpse"
+      install -m 644 "$src/apps/pulse-glimpse/plugin.toml" "$plug/plugin.toml"
+    fi
   fi
   if [[ -f $d/data/nixe-office.xml ]]; then
     mkdir -p "$share/mime/packages"
