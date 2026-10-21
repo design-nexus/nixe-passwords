@@ -1,6 +1,7 @@
 name: Independent application checks
-# Remains manual until approved immutable remote dependencies are published.
-on: workflow_dispatch
+on:
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

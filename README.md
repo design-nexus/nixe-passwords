@@ -9,5 +9,5 @@ and integrations are preserved.
 - Package: `python3 tools/package.py`; notes: `python3 tools/release-notes.py`.
 - Development rules and public dependency boundaries: [AGENTS.md](AGENTS.md).
 
-Shared dependencies use immutable local Git sources during migration. Publication
-and hosted CI remain gated until approved remote dependency revisions are available.
+Shared dependencies are pinned to immutable GitHub revisions.
+Use main for the standalone build; preserved tags describe historical source.

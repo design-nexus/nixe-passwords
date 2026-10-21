@@ -14,6 +14,7 @@ routine verification. Install app updates without opening/restarting them.
 Common guidance: https://github.com/design-nexus/nixe/blob/main/docs/AGENTS_COMMON.md
 This file carries the essential common rules so offline work remains possible.
 
-This is a local migration pilot. Dependencies use immutable local Git revisions.
-Do not publish until file:// dependencies are replaced with approved remote URLs,
-lockfiles are regenerated, and compatibility checks pass.
+Shared dependencies use immutable GitHub revisions. Coordinate public API changes
+with the suite manifest and affected consumers in design-nexus/nixe.
+Historical application tags preserve provenance; standalone builds use main
+or subsequent releases. Original release assets remain in the umbrella repo.

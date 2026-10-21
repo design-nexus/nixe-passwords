@@ -11,7 +11,7 @@
 #   --list     list the apps and exit
 set -euo pipefail
 
-REPO="design-nexus/nixe"
+REPO="design-nexus/nixe-passwords"
 ALL=(passwords)
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
@@ -132,8 +132,7 @@ if [[ " ${apps[*]} " == *" assistant "* ]]; then
     asrc="$here/apps/assistant"
   else
     say "Fetching the assistant"
-    git clone -q --depth 1 --filter=blob:none --sparse "https://github.com/$REPO.git" "$work/assistant"
-    git -C "$work/assistant" sparse-checkout set apps/assistant
+    git clone -q --depth 1 --filter=blob:none "https://github.com/$REPO.git" "$work/assistant"
     asrc="$work/assistant/apps/assistant"
   fi
   command -v cargo >/dev/null || die "Rust (cargo) is needed to build the assistant."
@@ -160,17 +159,16 @@ elif [[ ${NIXE_BUILD:-} != 1 ]] && tags=$(for a in "${apps[@]}"; do t=$(release_
 else
   # Fetch only the shared crates and the apps asked for.
   say "Fetching the source"
-  git clone -q --depth 1 --filter=blob:none --sparse "https://github.com/$REPO.git" "$work/src"
+  git clone -q --depth 1 --filter=blob:none "https://github.com/$REPO.git" "$work/src"
   dirs=(crates bin)
   for a in "${apps[@]}"; do app_info "$a"; dirs+=("apps/$dir"); done
   # Their Glimpse plugins build alongside them (see the Build step).
   for a in news capture pulse; do
     if [[ " ${apps[*]} " == *" $a "* ]]; then dirs+=("apps/$a-glimpse"); fi
   done
-  git -C "$work/src" sparse-checkout set "${dirs[@]}"
   src="$work/src"
   # The lockfile lists every app; with only some present, cargo trims it.
-  locked=()
+  # Complete standalone checkout retains its committed lockfile.
 fi
 
 # ---------- Build ----------
