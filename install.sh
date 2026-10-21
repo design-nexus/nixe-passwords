@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- music pdf
 #   curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- all
 #
-# Apps: settings contacts tasks torrents pdf notepad music media-player chat fonts archive office photos glimpse store git passwords weather capture
+# Apps: settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather capture
 # Options:
 #   --default  make the installed apps open their file types
 #   --gear     also add the Settings gear to the Omarchy bar (with settings)
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 REPO="design-nexus/nixe"
-ALL=(settings contacts tasks torrents pdf notepad music media-player chat fonts archive office photos glimpse store git passwords weather capture)
+ALL=(settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather capture)
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m==>\033[0m %s\n' "$*" >&2; }
@@ -36,11 +36,12 @@ app_info() {
     notepad) ids="Notepad" old_bins="notepad" ;;
     music) ids="Music" old_bins="music" deps="gstreamer gst-plugins-base gst-plugins-good gst-libav" defaults=true ;;
     media-player) ids="MediaPlayer" old_bins="media-player" deps="mpv ffmpeg" defaults=true ;;
+    theater) ids="Theater" deps="mpv ffmpeg libsecret" ;;
     chat) ids="Chat" old_bins="chat" ;;
     fonts) ids="Fonts" old_bins="fonts" deps="fontconfig pango tar xz" ;;
     archive) ids="Archive" old_bins="archive" deps="7zip" defaults=true ;;
-    weather) ids="Weather" deps="sqlite" ;;
-    capture) ids="Capture" deps="grim tesseract gtk4-layer-shell tesseract-data-eng" bins="nixe-capture nixe-capture-glimpse" ;;
+    weather) ids="Weather" ;;
+    capture) ids="Capture" deps="grim wl-clipboard tesseract gtk4-layer-shell tesseract-data-eng" bins="nixe-capture nixe-capture-glimpse" ;;
     office)
       bins="nixe-office nixe-write nixe-sheets nixe-present" ids="Write Sheets Present" defaults=true
       deps="gtksourceview5 libspelling hunspell hunspell-en_us"
@@ -154,6 +155,10 @@ else
   git clone -q --depth 1 --filter=blob:none --sparse "https://github.com/$REPO.git" "$work/src"
   dirs=(crates bin)
   for a in "${apps[@]}"; do app_info "$a"; dirs+=("apps/$dir"); done
+  # Their Glimpse plugins build alongside them (see the Build step).
+  for a in capture; do
+    if [[ " ${apps[*]} " == *" $a "* ]]; then dirs+=("apps/$a-glimpse"); fi
+  done
   git -C "$work/src" sparse-checkout set "${dirs[@]}"
   src="$work/src"
   # The lockfile lists every app; with only some present, cargo trims it.
@@ -324,7 +329,9 @@ if [[ " ${apps[*]} " != " glimpse " && -f $hypr/hyprland.lua ]] && grep -q 'o\.w
   [[ -x $bin/nixe-notepad ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Notepad$", { float = true, center = true, size = { 900, 700 } })'$'\n'
   [[ -x $bin/nixe-capture ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Capture\\.Pin$", { float = true, pin = true, size = { 480, 320 } })'$'\n'
   [[ -x $bin/nixe-archive ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Archive$", { float = true, center = true, size = { 960, 640 } })'$'\n'
-  if [[ -n $rules ]]; then
+  # Weather writes its own rule into nixe.lua when it's set to float, so the file
+  # must be loaded even while no rule is in it yet.
+  if [[ -n $rules || -x $bin/nixe-weather ]]; then
     printf -- '-- Written by the Nixe installer: Nixe apps that open as floating windows.\n-- Reinstalling an app rewrites this file.\n%s' "$rules" >"$hypr/nixe.lua"
     if ! grep -q 'require("hypr.nixe")' "$hypr/hyprland.lua"; then
       cp "$hypr/hyprland.lua" "$hypr/hyprland.lua.bak.$(date +%s)"
@@ -344,6 +351,14 @@ if [[ " ${apps[*]} " != " glimpse " && -f $hypr/hyprland.lua ]] && grep -q 'o\.w
 fi
 
 # ---------- Settings ----------
+# Weather's bar widget, for omarchy-shell; it's turned on from Settings → Plugins.
+if printf '%s\n' "${apps[@]}" | grep -qx weather && [[ -d $config/omarchy/plugins && -f $src/apps/weather/plugin/BarWidget.qml ]]; then
+  dest="$config/omarchy/plugins/design-nexus.weather"
+  mkdir -p "$dest"
+  install -m 644 "$src/apps/weather/plugin/manifest.json" "$src/apps/weather/plugin/BarWidget.qml" "$dest/"
+  omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+fi
+
 if printf '%s\n' "${apps[@]}" | grep -qx settings; then
   # Rewrite the managed Hyprland file so its bindings call the new programs.
   if [[ -f $config/settings/state.json || -f $config/nixe-settings/state.json ]]; then
