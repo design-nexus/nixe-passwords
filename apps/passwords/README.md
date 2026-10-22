@@ -6,7 +6,7 @@ Bitwarden client API, so the same account keeps working in the Bitwarden apps, t
 vault and the `bw` command line.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- passwords
+curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe-passwords/main/install.sh | bash -s -- passwords
 ```
 
 Launch `nixe-passwords`, enter your server's address, email and master password, and
