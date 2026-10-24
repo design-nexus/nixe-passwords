@@ -353,7 +353,9 @@ done
 [[ -x $bin/nixe ]] || install -m 755 "$src/bin/nixe" "$bin/nixe"
 
 update-desktop-database "$desk" 2>/dev/null || true
-gtk-update-icon-cache -q "$share/icons/hicolor" 2>/dev/null || true
+# User-local hicolor directories need not contain an index.theme.
+# Force a refresh even when only an existing icon file changed.
+gtk-update-icon-cache -f -t -q "$share/icons/hicolor" || warn "Could not refresh the application icon cache."
 
 # ---------- Hyprland: windows that open floating ----------
 hypr="$config/hypr"
