@@ -252,7 +252,7 @@ for a in "${apps[@]}"; do
   if [[ -f $d/data/nyx-office.xml ]]; then
     mkdir -p "$share/mime/packages"
     install -m 644 "$d/data/nyx-office.xml" "$share/mime/packages/"
-    rm -f "$share/mime/packages/nexus-office.xml"
+    rm -f "$share/mime/packages/nexus-office.xml" "$share/mime/packages/nixe-office.xml"
     update-mime-database "$share/mime" 2>/dev/null || true
   fi
 
