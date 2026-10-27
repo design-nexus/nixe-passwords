@@ -1,6 +1,6 @@
 {
-  "name": "io.github.design_nexus.nixe.passwords",
-  "description": "Nixe Passwords",
+  "name": "io.github.design_nexus.nyx.passwords",
+  "description": "Nyx Passwords",
   "path": "@BRIDGE@",
   "type": "stdio",
   "allowed_origins": ["chrome-extension://gjjphllfkicmjjeiecpfjefafbmgfnbl/"]

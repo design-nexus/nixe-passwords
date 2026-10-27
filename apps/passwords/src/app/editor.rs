@@ -6,9 +6,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::{gdk, gio, glib, prelude::*};
-use nixe_passwords_proto::Error as Code;
-use nixe_passwords_proto::fields::{self, Spec};
-use nixe_ui::widgets as w;
+use nyx_passwords_proto::Error as Code;
+use nyx_passwords_proto::fields::{self, Spec};
+use nyx_ui::widgets as w;
 use serde_json::json;
 
 use super::client;

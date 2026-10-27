@@ -14,7 +14,7 @@
 use std::time::Duration;
 
 use gtk::{gdk, glib, prelude::*};
-use nixe_passwords_proto::state;
+use nyx_passwords_proto::state;
 
 use super::client;
 use super::ui::{self, Ui};

@@ -1,4 +1,4 @@
-# Nixe Passwords — browser Native Messaging protocol
+# Nyx Passwords — browser Native Messaging protocol
 
 Status: implemented. The daemon side is tested end
 to end with the real bridge (`tests/daemon.rs`, `paired_browser`); the extension's
@@ -10,14 +10,14 @@ pairing derivation is held to the daemon's by one test vector
 | Piece | Where |
 | --- | --- |
 | Extension | `apps/passwords/browser/` (one source in `src/`, `manifest.firefox.json` and `manifest.chromium.json`), built by `scripts/build-extension.sh` |
-| Extension ids | Firefox and Zen: `nixe-passwords@design-nexus.github.io`; Chromium, Chrome and Brave: `gjjphllfkicmjjeiecpfjefafbmgfnbl` (fixed by the manifest's `key`) |
-| Host | `nixe-passwords-bridge`, started by the browser for each extension connection |
-| Host name | `io.github.design_nexus.nixe.passwords` |
+| Extension ids | Firefox and Zen: `nyx-passwords@design-nexus.github.io`; Chromium, Chrome and Brave: `gjjphllfkicmjjeiecpfjefafbmgfnbl` (fixed by the manifest's `key`) |
+| Host | `nyx-passwords-bridge`, started by the browser for each extension connection |
+| Host name | `io.github.design_nexus.nyx.passwords` |
 | Host manifests | Firefox and Zen: `~/.mozilla/native-messaging-hosts/` (both read `XREUserNativeManifests`); Chromium: `~/.config/chromium/NativeMessagingHosts/`; Brave: `~/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts/`; Chrome: `~/.config/google-chrome/NativeMessagingHosts/`. Templates in `browser/hosts/` |
 | Allowed callers | Firefox manifest `allowed_extensions`: the extension's fixed gecko id. Chromium manifest `allowed_origins`: `chrome-extension://<id>/` for the published key's id |
 
 The installer writes a host manifest for each browser whose profile folder exists, and
-puts the built extension in `~/.local/share/nixe-passwords/browser`.
+puts the built extension in `~/.local/share/nyx-passwords/browser`.
 
 **Installing the extension:**
 - **Chromium, Chrome, Brave:** "Load unpacked" from the `chromium` folder there, with
@@ -54,8 +54,8 @@ Pairing ties one browser profile to the daemon.
 1. **Hello:** the extension generates an X25519 key pair (WebCrypto) and sends
    `{"t":"hello","v":1,"pub":<b64>}` in the clear.
 2. **Key agreement:** the daemon generates its own pair. Both sides derive
-   `k = HKDF-SHA256(X25519(a,b), salt = pubE ‖ pubD, info = "nixe-passwords pair v1")`
-   and a 6-digit code from `HKDF(…, info = "nixe-passwords code v1")`.
+   `k = HKDF-SHA256(X25519(a,b), salt = pubE ‖ pubD, info = "nyx-passwords pair v1")`
+   and a 6-digit code from `HKDF(…, info = "nyx-passwords code v1")`.
 3. **Confirmation:** the daemon asks the GTK app to show "Pair <browser> (<extension
    id>)?" with the code. The extension popup shows the same code. The user confirms in
    the desktop app.
@@ -73,7 +73,7 @@ Each frame is `{"t":"msg","p":<pairing id>,"n":<counter>,"c":<b64 nonce ‖ AES-
 The reply is sealed the same way with `aad = "p|n|r"`. Unsealed replies say only
 `pending`, `locked`, `unknown` (pair again) or `unavailable` (the daemon isn't there).
 Sealed requests are `{"r": "<request>", …}`; errors come back as `{"error": "<name>"}`
-with the names in `nixe-passwords-proto`.
+with the names in `nyx-passwords-proto`.
 
 - **Counters:** the extension uses the time in milliseconds (or one more than its
   last). They must rise strictly per pairing and be within five minutes of the
@@ -115,7 +115,7 @@ with the names in `nixe-passwords-proto`.
 
 ## Running without the desktop
 
-When the daemon is unreachable, the extension shows "Nixe Passwords isn't running" and
+When the daemon is unreachable, the extension shows "Nyx Passwords isn't running" and
 offers nothing else.
 
 A stand-alone mode would sync and decrypt inside the extension. It's a later

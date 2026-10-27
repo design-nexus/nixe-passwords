@@ -5,8 +5,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gtk::{glib, prelude::*};
-use nixe_passwords_proto::Error as Code;
-use nixe_ui::widgets as w;
+use nyx_passwords_proto::Error as Code;
+use nyx_ui::widgets as w;
 
 use super::client;
 use super::prefs;
@@ -255,7 +255,7 @@ pub fn open(ui: &Ui) {
     );
     switch(
         &g,
-        "Nixe Assistant",
+        "Nyx Assistant",
         "Let the Assistant find logins and copy them to the clipboard. It asks for a key press each time and never sees a password.",
         v.assistant,
         |p, x| p.vault.assistant = x,
@@ -266,7 +266,7 @@ pub fn open(ui: &Ui) {
         "Browser extension",
         &glib::markup_escape_text(&format!(
             "Install it from {}: “Load unpacked” in Chromium and Brave; “Install Add-on From File” in Firefox and Zen. Then pair from its button.",
-            nixe_core::paths::pretty(&nixe_core::paths::data_dir().join("browser"))
+            nyx_core::paths::pretty(&nyx_core::paths::data_dir().join("browser"))
         )),
         None,
     ));
@@ -340,15 +340,15 @@ pub fn open(ui: &Ui) {
         g.append(&w::row(action, "", Some(w::key_caps(keys).upcast_ref())));
     }
 
-    nixe_ui::settings_card::open_page(
+    nyx_ui::settings_card::open_page(
         &ui.overlay,
         &ui.window,
-        nixe_ui::settings_card::Spec {
+        nyx_ui::settings_card::Spec {
             groups: &[
                 ("Vault", "dialog-password-symbolic", "Locking, sync, server"),
                 ("Clipboard", "edit-paste-symbolic", "Clearing, notifications"),
                 ("Generator", "media-playlist-shuffle-symbolic", "Passwords and passphrases"),
-                ("Integrations", "system-search-symbolic", "Glimpse, Nixe Assistant"),
+                ("Integrations", "system-search-symbolic", "Glimpse, Nyx Assistant"),
                 ("Browsers", "web-browser-symbolic", "Paired browsers, the extension"),
                 ("Passwords window", "applications-graphics-symbolic", "Theme and motion"),
                 ("Keyboard", "input-keyboard-symbolic", "Shortcuts"),

@@ -2,7 +2,7 @@
   "application": "passwords",
   "directory": "passwords",
   "packages": [
-    "nixe-passwords"
+    "nyx-passwords"
   ],
   "manifest": "Cargo.toml",
   "prepare": [],
@@ -13,9 +13,9 @@
       "test",
       "--locked",
       "-p",
-      "nixe-passwords-core",
+      "nyx-passwords-core",
       "-p",
-      "nixe-passwords-proto",
+      "nyx-passwords-proto",
       "--lib"
     ]
   ]

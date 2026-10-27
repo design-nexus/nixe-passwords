@@ -3,8 +3,8 @@
 //! the entry is cleared.
 
 use gtk::{glib, prelude::*};
-use nixe_passwords_proto::{Error as Code, state};
-use nixe_ui::widgets as w;
+use nyx_passwords_proto::{Error as Code, state};
+use nyx_ui::widgets as w;
 
 use super::client;
 use super::prefs;

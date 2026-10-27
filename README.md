@@ -6,10 +6,10 @@ Bitwarden client API, so the same account keeps working in the Bitwarden apps, t
 vault and the `bw` command line.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe-passwords/main/install.sh | bash -s -- passwords
+curl -fsSL https://raw.githubusercontent.com/design-nexus/nyx-passwords/main/install.sh | bash -s -- passwords
 ```
 
-Launch `nixe-passwords`, enter your server's address, email and master password, and
+Launch `nyx-passwords`, enter your server's address, email and master password, and
 the vault syncs. Two-step login works with an authenticator app or an emailed code.
 
 ## What it does
@@ -27,7 +27,7 @@ the vault syncs. Two-step login works with an authenticator app or an emailed co
   read-only items and hidden passwords stay that way.
 - Creates items in an organization's collections, changes their collections, and
   moves personal items into an organization.
-- Nixe Assistant can find logins and copy them ("copy my password for GitHub") once
+- Nyx Assistant can find logins and copy them ("copy my password for GitHub") once
   you turn that on in Passwords' settings. It asks for a key press each time and never
   sees a password.
 - A Security section lists logins with weak, reused or year-old passwords, worked out
@@ -44,11 +44,11 @@ passphrase can't be imported yet.
 
 ## How it keeps the vault
 
-- **The daemon:** a small service, `nixe-passwordsd` (systemd unit
-  `nixe-passwords.service`), holds the unlocked keys. The window asks it for one
+- **The daemon:** a small service, `nyx-passwordsd` (systemd unit
+  `nyx-passwords.service`), holds the unlocked keys. The window asks it for one
   field at a time over a private socket that only the suite's own programs may use.
 - **The local copy:** the server's encrypted data as received, in
-  `~/.local/share/nixe-passwords/vault.sqlite` (readable only by you). Nothing
+  `~/.local/share/nyx-passwords/vault.sqlite` (readable only by you). Nothing
   decrypted is written to disk.
 - **The session token:** kept in the desktop keyring (Secret Service).
 - **Copying:** the clipboard is marked as holding a password and cleared after 30 s
@@ -57,7 +57,7 @@ passphrase can't be imported yet.
 - **Locking:** after 15 minutes without use (configurable), when the screen locks,
   before sleep, and with Ctrl+L.
 
-Settings live in `~/.config/nixe-passwords/settings.toml`. Details:
+Settings live in `~/.config/nyx-passwords/settings.toml`. Details:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SECURITY.md](docs/SECURITY.md).
 
 | Shortcut | Action |
@@ -77,4 +77,4 @@ Settings live in `~/.config/nixe-passwords/settings.toml`. Details:
 ## License
 
 GPL-3.0-only, because it uses Bitwarden's GPL-licensed cryptography library. The rest
-of Nixe is MIT.
+of Nyx is MIT.

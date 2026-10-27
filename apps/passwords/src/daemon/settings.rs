@@ -1,11 +1,11 @@
-//! The daemon's view of `~/.config/nixe-passwords/settings.toml`. The app writes the file;
+//! The daemon's view of `~/.config/nyx-passwords/settings.toml`. The app writes the file;
 //! the daemon reads only the keys below (ignoring the window's) and reloads when the
 //! file changes.
 
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use nixe_passwords_core::generate::{PassphraseRules, PasswordRules};
+use nyx_passwords_core::generate::{PassphraseRules, PasswordRules};
 use serde::{Deserialize, Serialize};
 
 /// Also the vault part of the window's preferences (`#[serde(flatten)]` there), so the
@@ -26,7 +26,7 @@ pub struct Settings {
     pub sync_minutes: u64,
     /// Whether Glimpse may search the vault and copy from it.
     pub glimpse: bool,
-    /// Whether Nixe Assistant may find logins and copy from them (each call still needs
+    /// Whether Nyx Assistant may find logins and copy from them (each call still needs
     /// a key press there). Off until turned on.
     pub assistant: bool,
     /// A PEM file of extra certificate authorities, for a server with its own CA.

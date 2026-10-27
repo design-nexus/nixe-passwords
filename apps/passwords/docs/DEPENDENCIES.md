@@ -1,16 +1,16 @@
-# Nixe Passwords — SDK and dependency evaluation
+# Nyx Passwords — SDK and dependency evaluation
 
 Checked 2026-10-18 against crates.io and upstream repositories.
 
 ## Licensing
 
-The Passwords packages (`nixe-passwords`, `nixe-passwords-core`) are **GPL-3.0-only**,
-because they link Bitwarden's GPL crypto. The rest of Nixe stays MIT. MIT code
-(`nixe-core`, `nixe-theme`, `nixe-ui`, `nixe-passwords-proto`) may be linked into the
+The Passwords packages (`nyx-passwords`, `nyx-passwords-core`) are **GPL-3.0-only**,
+because they link Bitwarden's GPL crypto. The rest of Nyx stays MIT. MIT code
+(`nyx-core`, `nyx-theme`, `nyx-ui`, `nyx-passwords-proto`) may be linked into the
 GPL binaries.
 
 Glimpse, Settings and the browser extension never link the GPL crates. They talk to
-the daemon over IPC with `nixe-passwords-proto` (MIT).
+the daemon over IPC with `nyx-passwords-proto` (MIT).
 
 ## Bitwarden SDK
 
@@ -99,7 +99,7 @@ Each result is recorded here when the spike runs.
   `decrypt_user_key`, `KeyDecryptable` for `EncString`, `PrivateKey::from_der` and
   `UnsignedSharedKey::decapsulate_key_unsigned`.
 
-**2026-10-18, Vaultwarden 1.37.4 round trip** (`crates/nixe-passwords-core/tests/spike.rs`,
+**2026-10-18, Vaultwarden 1.37.4 round trip** (`crates/nyx-passwords-core/tests/spike.rs`,
 server from `apps/passwords/scripts/test-server.sh`; passes for a PBKDF2 600 000 and an
 Argon2id 3/64 MiB/4 account):
 
@@ -118,7 +118,7 @@ Argon2id 3/64 MiB/4 account):
 | Login rate limit | 10 per minute by default; the test server raises it. |
 | New item types | Vaultwarden 1.37 knows types 6 to 8 (bank account, driver's licence, passport) behind a client flag. The model must keep unknown types intact. |
 
-**cargo deny** (`crates/nixe-passwords-core/deny.toml`):
+**cargo deny** (`crates/nyx-passwords-core/deny.toml`):
 - Licences: pass.
 - `rustls` 0.23.45: four advisories (RUSTSEC-2026-0346, -0347 and two more), fixed in
   0.23.46. That lockfile entry is shared with the rest of the workspace.

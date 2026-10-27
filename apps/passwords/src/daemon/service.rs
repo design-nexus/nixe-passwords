@@ -4,17 +4,17 @@
 
 use std::sync::Arc;
 
-use nixe_passwords_core::api::{TwoFactor, TwoFactorAnswer};
-use nixe_passwords_core::secret::Secret;
-use nixe_passwords_proto::{Error as Code, Item};
+use nyx_passwords_core::api::{TwoFactor, TwoFactorAnswer};
+use nyx_passwords_core::secret::Secret;
+use nyx_passwords_proto::{Error as Code, Item};
 use zbus::{DBusError, interface};
 
 use super::peer::Scope;
 use super::vault::{Failure, SignInResult, Vault};
 
-/// D-Bus errors, named as `nixe_passwords_proto::Error` (a test keeps them in step).
+/// D-Bus errors, named as `nyx_passwords_proto::Error` (a test keeps them in step).
 #[derive(Debug, DBusError)]
-#[zbus(prefix = "io.github.design_nexus.nixe.Passwords1.Error")]
+#[zbus(prefix = "io.github.design_nexus.nyx.Passwords1.Error")]
 pub enum Error {
     #[zbus(error)]
     ZBus(zbus::Error),
@@ -63,7 +63,7 @@ pub struct Service {
     pub pid: i32,
 }
 
-#[interface(name = "io.github.design_nexus.nixe.Passwords1")]
+#[interface(name = "io.github.design_nexus.nyx.Passwords1")]
 impl Service {
     /// `(state, server host, seconds a copy stays on the clipboard)`.
     async fn status(&self) -> (String, String, u32) {

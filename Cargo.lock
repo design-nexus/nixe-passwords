@@ -2131,107 +2131,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
-name = "nixe-core"
-version = "0.1.0"
-source = "git+https://github.com/design-nexus/nixe-core.git?rev=87682e6c936b6a4f006639b1a1c099e96346c07c#87682e6c936b6a4f006639b1a1c099e96346c07c"
-dependencies = [
- "anyhow",
- "gtk4",
- "serde",
- "serde_json",
- "toml",
-]
-
-[[package]]
-name = "nixe-passwords"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "base64 0.22.1",
- "bitwarden-crypto",
- "futures-util",
- "gtk4",
- "hkdf",
- "libc",
- "nixe-core",
- "nixe-passwords-core",
- "nixe-passwords-proto",
- "nixe-theme",
- "nixe-ui",
- "rand",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "toml",
- "url",
- "uuid",
- "wl-clipboard-rs",
- "x25519-dalek",
- "zbus",
- "zeroize",
-]
-
-[[package]]
-name = "nixe-passwords-core"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "bitwarden-crypto",
- "bitwarden-encoding",
- "hkdf",
- "nixe-passwords-proto",
- "psl",
- "rand",
- "regex",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "ssh-key",
- "tempfile",
- "tokio",
- "totp-rs",
- "url",
- "uuid",
- "x25519-dalek",
- "zeroize",
- "zxcvbn",
-]
-
-[[package]]
-name = "nixe-passwords-proto"
-version = "0.1.0"
-dependencies = [
- "gio",
-]
-
-[[package]]
-name = "nixe-theme"
-version = "0.1.0"
-source = "git+https://github.com/design-nexus/nixe-design.git?rev=b8204de80644e263e32783602f2e0ae393578c9e#b8204de80644e263e32783602f2e0ae393578c9e"
-dependencies = [
- "gtk4",
- "nixe-core",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "nixe-ui"
-version = "0.1.0"
-source = "git+https://github.com/design-nexus/nixe-design.git?rev=b8204de80644e263e32783602f2e0ae393578c9e#b8204de80644e263e32783602f2e0ae393578c9e"
-dependencies = [
- "gtk4",
- "nixe-core",
- "nixe-theme",
-]
-
-[[package]]
 name = "nom"
 version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2281,6 +2180,107 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "nyx-core"
+version = "0.1.0"
+source = "git+https://github.com/design-nexus/nyx-core.git?rev=52cba5e27a3dd5f00c780f53e423302b4b5f9c9c#52cba5e27a3dd5f00c780f53e423302b4b5f9c9c"
+dependencies = [
+ "anyhow",
+ "gtk4",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
+name = "nyx-passwords"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64 0.22.1",
+ "bitwarden-crypto",
+ "futures-util",
+ "gtk4",
+ "hkdf",
+ "libc",
+ "nyx-core",
+ "nyx-passwords-core",
+ "nyx-passwords-proto",
+ "nyx-theme",
+ "nyx-ui",
+ "rand",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "toml",
+ "url",
+ "uuid",
+ "wl-clipboard-rs",
+ "x25519-dalek",
+ "zbus",
+ "zeroize",
+]
+
+[[package]]
+name = "nyx-passwords-core"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "bitwarden-crypto",
+ "bitwarden-encoding",
+ "hkdf",
+ "nyx-passwords-proto",
+ "psl",
+ "rand",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "ssh-key",
+ "tempfile",
+ "tokio",
+ "totp-rs",
+ "url",
+ "uuid",
+ "x25519-dalek",
+ "zeroize",
+ "zxcvbn",
+]
+
+[[package]]
+name = "nyx-passwords-proto"
+version = "0.1.0"
+dependencies = [
+ "gio",
+]
+
+[[package]]
+name = "nyx-theme"
+version = "0.1.0"
+source = "git+https://github.com/design-nexus/nyx-design.git?rev=938c638951a53f5874a8276d07ac9dcd68b191ad#938c638951a53f5874a8276d07ac9dcd68b191ad"
+dependencies = [
+ "gtk4",
+ "nyx-core",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "nyx-ui"
+version = "0.1.0"
+source = "git+https://github.com/design-nexus/nyx-design.git?rev=938c638951a53f5874a8276d07ac9dcd68b191ad#938c638951a53f5874a8276d07ac9dcd68b191ad"
+dependencies = [
+ "gtk4",
+ "nyx-core",
+ "nyx-theme",
 ]
 
 [[package]]

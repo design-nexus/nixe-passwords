@@ -1,20 +1,20 @@
 [package]
-name = "nixe-passwords"
+name = "nyx-passwords"
 version = "0.1.0"
 description = "A password manager for Vaultwarden"
-default-run = "nixe-passwords"
+default-run = "nyx-passwords"
 edition.workspace = true
 license = "GPL-3.0-only"
 authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-nixe-core = { git = "https://github.com/design-nexus/nixe-core.git", rev = "87682e6c936b6a4f006639b1a1c099e96346c07c" }
-nixe-theme = { git = "https://github.com/design-nexus/nixe-design.git", rev = "b8204de80644e263e32783602f2e0ae393578c9e" }
-nixe-ui = { git = "https://github.com/design-nexus/nixe-design.git", rev = "b8204de80644e263e32783602f2e0ae393578c9e" }
+nyx-core = { git = "https://github.com/design-nexus/nyx-core.git", rev = "52cba5e27a3dd5f00c780f53e423302b4b5f9c9c" }
+nyx-theme = { git = "https://github.com/design-nexus/nyx-design.git", rev = "938c638951a53f5874a8276d07ac9dcd68b191ad" }
+nyx-ui = { git = "https://github.com/design-nexus/nyx-design.git", rev = "938c638951a53f5874a8276d07ac9dcd68b191ad" }
 gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
-nixe-passwords-core = { path = "../../crates/nixe-passwords-core" }
-nixe-passwords-proto = { path = "../../crates/nixe-passwords-proto", features = ["client"] }
+nyx-passwords-core = { path = "../../crates/nyx-passwords-core" }
+nyx-passwords-proto = { path = "../../crates/nyx-passwords-proto", features = ["client"] }
 base64 = "0.22"
 libc = "0.2"
 rand = "0.10"

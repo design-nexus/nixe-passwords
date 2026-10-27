@@ -40,10 +40,10 @@ async function refresh() {
   const status = await ask({ cmd: "status" });
   switch (status.state) {
     case "unavailable":
-      return show(note("Nixe Passwords isn't installed on this computer, or couldn't start."));
+      return show(note("Nyx Passwords isn't installed on this computer, or couldn't start."));
     case "unpaired":
       return show(
-        note("Pair this browser with Nixe Passwords to fill logins from your vault."),
+        note("Pair this browser with Nyx Passwords to fill logins from your vault."),
         el("button", { class: "primary", onclick: startPairing }, "Pair with Passwords"),
       );
     case "pending":

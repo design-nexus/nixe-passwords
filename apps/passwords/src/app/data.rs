@@ -73,9 +73,9 @@ pub struct Collection {
 pub const KINDS: &[(&str, &str, &str)] = &[
     ("login", "Logins", "dialog-password-symbolic"),
     ("note", "Secure notes", "text-x-generic-symbolic"),
-    ("card", "Cards", "nixe-card-symbolic"),
+    ("card", "Cards", "nyx-card-symbolic"),
     ("identity", "Identities", "avatar-default-symbolic"),
-    ("ssh", "SSH keys", "nixe-key-symbolic"),
+    ("ssh", "SSH keys", "nyx-key-symbolic"),
 ];
 
 pub fn kind_icon(kind: &str) -> &'static str {

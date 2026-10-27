@@ -1,4 +1,4 @@
-//! `nixe-passwordsd`: holds the vault's keys and serves the app, Glimpse and the
+//! `nyx-passwordsd`: holds the vault's keys and serves the app, Glimpse and the
 //! Settings page over a private socket (docs/ARCHITECTURE.md).
 
 mod browser;
@@ -17,15 +17,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use futures_util::StreamExt;
-use nixe_core::{app, paths};
-use nixe_passwords_core::store::Store;
-use nixe_passwords_proto as proto;
+use nyx_core::{app, paths};
+use nyx_passwords_core::store::Store;
+use nyx_passwords_proto as proto;
 use tokio::net::UnixListener;
 
 use self::service::Service;
 use self::vault::Vault;
 
-pub const APP: app::App = app::App { slug: "nixe-passwords", name: "Passwords" };
+pub const APP: app::App = app::App { slug: "nyx-passwords", name: "Passwords" };
 
 pub fn run() -> ! {
     app::init(APP);
@@ -49,25 +49,25 @@ fn harden() {
 
 async fn serve() -> i32 {
     let Some(socket) = proto::socket_path() else {
-        eprintln!("nixe-passwordsd: XDG_RUNTIME_DIR isn't set");
+        eprintln!("nyx-passwordsd: XDG_RUNTIME_DIR isn't set");
         return 1;
     };
     let dir = socket.parent().expect("socket has a directory").to_path_buf();
     if fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).is_err()
         || fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).is_err()
     {
-        eprintln!("nixe-passwordsd: couldn't create {}", dir.display());
+        eprintln!("nyx-passwordsd: couldn't create {}", dir.display());
         return 1;
     }
     let Some(_instance) = single_instance(&dir) else {
-        eprintln!("nixe-passwordsd: already running");
+        eprintln!("nyx-passwordsd: already running");
         return 0;
     };
     let _ = fs::remove_file(&socket);
     let listener = match UnixListener::bind(&socket) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("nixe-passwordsd: couldn't listen on {}: {e}", socket.display());
+            eprintln!("nyx-passwordsd: couldn't listen on {}: {e}", socket.display());
             return 1;
         }
     };
@@ -77,7 +77,7 @@ async fn serve() -> i32 {
     let store = match Store::open(&paths::data_dir().join("vault.sqlite")) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("nixe-passwordsd: {e}");
+            eprintln!("nyx-passwordsd: {e}");
             return 1;
         }
     };

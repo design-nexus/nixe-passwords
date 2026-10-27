@@ -1,0 +1,649 @@
+//! Creating, editing, trashing and restoring logins against the throwaway Vaultwarden,
+//! with the official `bw` CLI as the other client:
+//!
+//!   apps/passwords/scripts/test-server.sh start
+//!   NYX_PW_TEST_SERVER=https://127.0.0.1:8087 NYX_PW_TEST_CA=$PWD/target/vaultwarden-test/ca.pem \
+//!     cargo test -p nyx-passwords-core --test edit -- --ignored
+
+mod common;
+
+use std::num::NonZeroU32;
+
+use nyx_passwords_core::api::{ApiError, Server};
+use nyx_passwords_core::edit::{ItemDraft, LoginDraft, Place};
+use nyx_passwords_core::model::Kind;
+use nyx_passwords_core::secret::Secret;
+use nyx_passwords_core::session::{self, Session, SessionError, SignIn};
+use nyx_passwords_core::store::Store;
+use nyx_passwords_core::vault::{Field, reveal};
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+fn draft(name: &str, password: &str) -> LoginDraft {
+    LoginDraft {
+        name: Secret::new(name),
+        username: Some(Secret::new("octo")),
+        password: Some(Secret::new(password)),
+        totp: Some(Secret::new("JBSWY3DPEHPK3PXP")),
+        uris: vec![Secret::new("https://github.com/login"), Secret::new("github.com")],
+        notes: Some(Secret::new("written by nyx")),
+        folder: None,
+        favorite: true,
+        reprompt: false,
+        place: Place::default(),
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
+async fn logins_round_trip_with_bw() {
+    let email = common::fresh_email("edit");
+    let password = "correct horse edit battery";
+    common::register(&email, password, &bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() }).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+    let SignIn::Done(mut s) =
+        session::sign_in(&mut store, &server, &email, &Secret::new(password), "nyx test", None).await.unwrap()
+    else {
+        panic!("two-step login")
+    };
+    let refresh = Secret::new(s.refresh_token().unwrap().expose());
+
+    // Create: bw reads every field, including both web addresses.
+    let id = s.create_login(&mut store, &server, &refresh, &draft("GitHub", "canary-one-Pw!9")).await.unwrap();
+    let bw = common::Bw::login(&email, password);
+    let item = bw.item(&id.to_string());
+    assert_eq!(item["name"], "GitHub");
+    assert_eq!(item["login"]["username"], "octo");
+    assert_eq!(item["login"]["password"], "canary-one-Pw!9");
+    assert_eq!(item["login"]["totp"], "JBSWY3DPEHPK3PXP");
+    assert_eq!(item["login"]["uris"][0]["uri"], "https://github.com/login");
+    assert_eq!(item["login"]["uris"][1]["uri"], "github.com");
+    assert_eq!(item["notes"], "written by nyx");
+    assert_eq!(item["favorite"], true);
+    assert_eq!(s.view.search("github", 5).len(), 1);
+
+    // Edit: the new password shows in bw, the old one in its history.
+    s.update_login(&mut store, &server, &refresh, id, &draft("GitHub", "canary-two-Pw!9")).await.unwrap();
+    let item = bw.item(&id.to_string());
+    assert_eq!(item["login"]["password"], "canary-two-Pw!9");
+    assert_eq!(item["passwordHistory"][0]["password"], "canary-one-Pw!9");
+    assert_eq!(reveal(&s.keys, &s.snapshot, id, Field::Password).unwrap().expose(), "canary-two-Pw!9");
+
+    // An edit made elsewhere since our copy: ours is refused and theirs comes in.
+    std::thread::sleep(std::time::Duration::from_millis(2100));
+    let mut theirs = item.clone();
+    theirs["name"] = "GitHub (renamed in bw)".into();
+    bw.edit(&id.to_string(), &theirs);
+    let refused = s.update_login(&mut store, &server, &refresh, id, &draft("GitHub mine", "canary-three-Pw!9")).await;
+    assert_eq!(refused.err(), Some(SessionError::Api(ApiError::Conflict)));
+    assert_eq!(s.view.get(id).unwrap().name.expose(), "GitHub (renamed in bw)");
+    assert_eq!(bw.item(&id.to_string())["login"]["password"], "canary-two-Pw!9");
+    // Based on the fresh copy, the edit goes through.
+    s.update_login(&mut store, &server, &refresh, id, &draft("GitHub mine", "canary-three-Pw!9")).await.unwrap();
+    assert_eq!(bw.item(&id.to_string())["name"], "GitHub mine");
+
+    // Trash and restore.
+    s.trash(&mut store, &server, &refresh, id).await.unwrap();
+    assert!(s.view.get(id).unwrap().deleted && s.view.search("github", 5).is_empty());
+    assert!(bw.item(&id.to_string())["deletedDate"].is_string());
+    s.restore(&mut store, &server, &refresh, id).await.unwrap();
+    assert!(!s.view.get(id).unwrap().deleted);
+
+    // The local copy has every change: unlock offline and look.
+    s.lock();
+    let s = session::unlock(&mut store, &Secret::new(password)).await.unwrap();
+    assert_eq!(s.view.get(id).unwrap().name.expose(), "GitHub mine");
+    assert_eq!(reveal(&s.keys, &s.snapshot, id, Field::Password).unwrap().expose(), "canary-three-Pw!9");
+}
+
+/// A draft that changes nothing: the item as `bw` shows it.
+fn draft_of(item: &Value) -> LoginDraft {
+    let text = |v: &Value| v.as_str().map(Secret::new);
+    let login = &item["login"];
+    LoginDraft {
+        name: Secret::new(item["name"].as_str().unwrap()),
+        username: text(&login["username"]),
+        password: text(&login["password"]),
+        totp: text(&login["totp"]),
+        uris: login["uris"].as_array().into_iter().flatten().filter_map(|u| text(&u["uri"])).collect(),
+        notes: text(&item["notes"]),
+        folder: item["folderId"].as_str().map(|f| f.parse().unwrap()),
+        favorite: item["favorite"].as_bool().unwrap(),
+        reprompt: item["reprompt"] == 1,
+        place: Place {
+            organization: item["organizationId"].as_str().map(|o| o.parse().unwrap()),
+            collections: item["collectionIds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|c| c.as_str().unwrap().parse().unwrap())
+                .collect(),
+        },
+    }
+}
+
+/// `bw`'s view without what changes on every save: the revision date, and attachment
+/// links (signed per request).
+fn settled(mut item: Value) -> Value {
+    item.as_object_mut().unwrap().remove("revisionDate");
+    for a in item["attachments"].as_array_mut().into_iter().flatten() {
+        a.as_object_mut().unwrap().remove("url");
+    }
+    item
+}
+
+/// Renames the item here, then changes its password. After each edit `bw` must see that
+/// change and nothing else: whatever this client doesn't edit comes back as it was.
+async fn edits_keep_the_rest(s: &mut Session, store: &mut Store, server: &Server, refresh: &Secret, bw: &common::Bw, id: Uuid) {
+    let before = bw.item(&id.to_string());
+    let mut draft = draft_of(&before);
+    let name = format!("{} renamed", before["name"].as_str().unwrap());
+    draft.name = Secret::new(name.as_str());
+    s.update_login(store, server, refresh, id, &draft).await.unwrap();
+    let after = bw.item(&id.to_string());
+    let mut expected = before.clone();
+    expected["name"] = name.into();
+    assert_eq!(settled(after.clone()), settled(expected), "a rename changes only the name");
+
+    let before = after;
+    draft.password = Some(Secret::new("canary-changed-Pw!9"));
+    s.update_login(store, server, refresh, id, &draft).await.unwrap();
+    let after = bw.item(&id.to_string());
+    assert_eq!(after["login"]["password"], "canary-changed-Pw!9");
+    let history = after["passwordHistory"].as_array().unwrap();
+    assert_eq!(history[0]["password"], before["login"]["password"]);
+    assert_eq!(history[1..], before["passwordHistory"].as_array().cloned().unwrap_or_default()[..]);
+    assert_ne!(after["login"]["passwordRevisionDate"], before["login"]["passwordRevisionDate"]);
+    let mut expected = before.clone();
+    for path in [&["login", "password"][..], &["login", "passwordRevisionDate"], &["passwordHistory"]] {
+        let (mut from, mut to) = (&after, &mut expected);
+        for key in path {
+            from = &from[*key];
+            to = &mut to[*key];
+        }
+        *to = from.clone();
+    }
+    assert_eq!(settled(after), settled(expected), "a new password changes only the password and its history");
+}
+
+/// Items written by the official clients keep what this client doesn't edit: every kind
+/// of custom field, match rules, a passkey, older password history and an attachment; an
+/// item with its own key keeps that key; an organization item keeps its collection.
+#[tokio::test]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
+async fn edits_keep_what_other_clients_wrote() {
+    let email = common::fresh_email("compat");
+    let password = "correct horse compat battery";
+    let public =
+        common::register(&email, password, &bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() })
+            .await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+    let SignIn::Done(mut s) =
+        session::sign_in(&mut store, &server, &email, &Secret::new(password), "nyx test", None).await.unwrap()
+    else {
+        panic!("two-step login")
+    };
+    let refresh = Secret::new(s.refresh_token().unwrap().expose());
+    let access = Secret::new(s.access(&server, &refresh).await.unwrap().expose());
+    let org = common::create_org(access.expose(), &email, &public).await;
+    let (org, collection) = (org.id, org.collection);
+    let bw = common::Bw::login(&email, password);
+
+    // Written by bw: the parts this client leaves alone.
+    let rich = bw.create(&json!({
+        "type": 1, "name": "Rich", "notes": "kept notes", "favorite": false, "reprompt": 0, "folderId": null,
+        "fields": [
+            {"name": "text", "value": "plain value", "type": 0},
+            {"name": "hidden", "value": "hidden value", "type": 1},
+            {"name": "flag", "value": "true", "type": 2},
+            {"name": "linked", "value": null, "type": 3, "linkedId": 100},
+        ],
+        "login": {
+            "username": "rich", "password": "canary-rich-Pw!9", "totp": "JBSWY3DPEHPK3PXP",
+            "uris": [{"match": 1, "uri": "https://a.example.com"}, {"match": 3, "uri": "https://b.example.com/x"}],
+            "fido2Credentials": [{
+                "credentialId": "b64.AAECAwQFBgcICQoLDA0ODw", "keyType": "public-key", "keyAlgorithm": "ECDSA",
+                "keyCurve": "P-256", "keyValue": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEH", "rpId": "example.com",
+                "userHandle": "dXNlcg", "userName": "rich", "counter": "0", "rpName": "Example",
+                "userDisplayName": "Rich", "discoverable": "true", "creationDate": "2026-10-01T00:00:00.000Z",
+            }],
+        },
+        "passwordHistory": [{"lastUsedDate": "2026-01-01T00:00:00.000Z", "password": "canary-older-Pw!9"}],
+    }));
+    let rich: Uuid = rich["id"].as_str().unwrap().parse().unwrap();
+    let file = dir.path().join("recovery-codes.txt");
+    std::fs::write(&file, "canary attachment contents\n").unwrap();
+    bw.attach(&rich.to_string(), &file);
+    let shared = bw.create(&json!({
+        "type": 1, "name": "Shared", "notes": null, "favorite": false, "reprompt": 0, "folderId": null,
+        "organizationId": org, "collectionIds": [collection],
+        "login": {"username": "team", "password": "canary-team-Pw!9", "uris": [{"match": null, "uri": "https://team.example.com"}]},
+    }));
+    let shared: Uuid = shared["id"].as_str().unwrap().parse().unwrap();
+
+    // Written as newer clients do: the item has its own key.
+    let wrapped = {
+        let (mut key, wrapped) = s.keys.new_item(None).unwrap();
+        let body = json!({
+            "type": 1, "name": key.encrypt("Own key").unwrap(), "notes": null, "folderId": null,
+            "organizationId": null, "key": wrapped, "favorite": false, "reprompt": 0, "passwordHistory": null,
+            "fields": [{"name": key.encrypt("pin").unwrap(), "value": key.encrypt("4321").unwrap(), "type": 1}],
+            "login": {
+                "username": key.encrypt("own").unwrap(), "password": key.encrypt("canary-own-Pw!9").unwrap(),
+                "totp": null, "uris": [{"uri": key.encrypt("https://own.example.com").unwrap(), "match": null}],
+            },
+            "encryptedFor": s.snapshot.profile.id,
+        });
+        drop(key);
+        (server.create_cipher(&access, &body).await.unwrap().id, wrapped)
+    };
+    let (own, wrapped) = wrapped;
+    assert_eq!(bw.item(&own.to_string())["fields"][0]["value"], "4321", "bw reads an item with its own key");
+
+    s.sync(&mut store, &server, &refresh).await.unwrap();
+    for id in [rich, shared, own] {
+        edits_keep_the_rest(&mut s, &mut store, &server, &refresh, &bw, id).await;
+    }
+    assert_eq!(s.snapshot.ciphers.iter().find(|c| c.id == own).unwrap().key.as_deref(), Some(wrapped.as_str()));
+    assert_eq!(bw.attachment(&rich.to_string(), "recovery-codes.txt"), b"canary attachment contents\n");
+}
+
+fn item_draft(kind: Kind, name: &str, fields: &[(&str, &str)]) -> ItemDraft {
+    ItemDraft {
+        kind,
+        name: Secret::new(name),
+        fields: fields.iter().map(|(n, v)| (n.to_string(), Secret::new(*v))).collect(),
+        notes: Some(Secret::new(format!("{name} notes"))),
+        folder: None,
+        favorite: false,
+        reprompt: false,
+        place: Place::default(),
+    }
+}
+
+/// Notes, cards and identities made here read back in `bw` field by field; editing one
+/// `bw` made changes only what was edited.
+#[tokio::test]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
+async fn notes_cards_and_identities_round_trip_with_bw() {
+    let email = common::fresh_email("items");
+    let password = "correct horse items battery";
+    common::register(&email, password, &bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() }).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+    let SignIn::Done(mut s) =
+        session::sign_in(&mut store, &server, &email, &Secret::new(password), "nyx test", None).await.unwrap()
+    else {
+        panic!("two-step login")
+    };
+    let refresh = Secret::new(s.refresh_token().unwrap().expose());
+    let bw = common::Bw::login(&email, password);
+
+    let card = [
+        ("card.cardholderName", "Octo Cat"),
+        ("card.brand", "Visa"),
+        ("card.number", "4111111111111111"),
+        ("card.expMonth", "12"),
+        ("card.expYear", "2030"),
+        ("card.code", "123"),
+    ];
+    let identity = [
+        ("identity.title", "Dr"),
+        ("identity.firstName", "Octo"),
+        ("identity.lastName", "Cat"),
+        ("identity.email", "octo@example.com"),
+        ("identity.city", "Springfield"),
+        ("identity.ssn", "078-05-1120"),
+    ];
+    for (draft, section) in [
+        (item_draft(Kind::Note, "Note here", &[]), "secureNote"),
+        (item_draft(Kind::Card, "Card here", &card), "card"),
+        (item_draft(Kind::Identity, "Identity here", &identity), "identity"),
+    ] {
+        let id = s.create_item(&mut store, &server, &refresh, &draft).await.unwrap();
+        let item = bw.item(&id.to_string());
+        assert_eq!(item["name"], draft.name.expose());
+        assert_eq!(item["notes"], format!("{} notes", draft.name.expose()));
+        assert_eq!(item["type"], draft.kind.number());
+        for (name, value) in &draft.fields {
+            let key = name.split_once('.').unwrap().1;
+            assert_eq!(item[section][key], value.expose(), "{name}");
+        }
+        if draft.kind == Kind::Note {
+            assert_eq!(item["secureNote"]["type"], 0);
+        }
+    }
+
+    // A card bw made, with a custom field and an attachment: a new expiry year changes
+    // only that, and clearing the code clears only that.
+    let made = bw.create(&json!({
+        "type": 3, "name": "Card from bw", "notes": null, "favorite": true, "reprompt": 0, "folderId": null,
+        "fields": [{"name": "pin", "value": "4321", "type": 1}],
+        "card": {"cardholderName": "Octo Cat", "brand": "Mastercard", "number": "5555555555554444",
+                 "expMonth": "3", "expYear": "2027", "code": "456"},
+    }));
+    let id: Uuid = made["id"].as_str().unwrap().parse().unwrap();
+    let file = dir.path().join("card-terms.txt");
+    std::fs::write(&file, "canary card attachment\n").unwrap();
+    bw.attach(&id.to_string(), &file);
+    s.sync(&mut store, &server, &refresh).await.unwrap();
+    let before = bw.item(&id.to_string());
+    let mut fields: Vec<(&str, &str)> =
+        nyx_passwords_core::vault::CARD.iter().map(|spec| (spec.name, before["card"][spec.key].as_str().unwrap())).collect();
+    for f in &mut fields {
+        match f.0 {
+            "card.expYear" => f.1 = "2031",
+            "card.code" => f.1 = "",
+            _ => {}
+        }
+    }
+    let mut draft = item_draft(Kind::Card, "Card from bw", &fields);
+    draft.notes = None;
+    draft.favorite = true;
+    s.update_item(&mut store, &server, &refresh, id, &draft).await.unwrap();
+    let after = bw.item(&id.to_string());
+    let mut expected = before.clone();
+    expected["card"]["expYear"] = "2031".into();
+    expected["card"]["code"] = Value::Null;
+    assert_eq!(settled(after), settled(expected));
+    assert_eq!(bw.attachment(&id.to_string(), "card-terms.txt"), b"canary card attachment\n");
+
+    // A card isn't saved as an identity.
+    let wrong = item_draft(Kind::Identity, "Card from bw", &[]);
+    assert!(s.update_item(&mut store, &server, &refresh, id, &wrong).await.is_err());
+}
+
+/// An SSH key made here reads back in `bw` with the public key and fingerprint worked
+/// out from its private key, whatever the draft said; a new key replaces all three; a
+/// key that can't be read is refused.
+#[tokio::test]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
+async fn ssh_keys_round_trip_with_bw() {
+    let email = common::fresh_email("ssh");
+    let password = "correct horse ssh battery";
+    common::register(&email, password, &bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() }).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+    let SignIn::Done(mut s) =
+        session::sign_in(&mut store, &server, &email, &Secret::new(password), "nyx test", None).await.unwrap()
+    else {
+        panic!("two-step login")
+    };
+    let refresh = Secret::new(s.refresh_token().unwrap().expose());
+    let bw = common::Bw::login(&email, password);
+    let fixture = |name: &str| std::fs::read_to_string(format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+
+    let private = fixture("ssh-ed25519");
+    let draft = item_draft(
+        Kind::SshKey,
+        "Deploy key",
+        &[
+            ("ssh.privateKey", private.as_str()),
+            ("ssh.publicKey", "ssh-ed25519 not-this-one"),
+            ("ssh.keyFingerprint", "SHA256:nope"),
+        ],
+    );
+    let id = s.create_item(&mut store, &server, &refresh, &draft).await.unwrap();
+    let item = bw.item(&id.to_string());
+    assert_eq!(item["type"], 5);
+    assert_eq!(item["sshKey"]["publicKey"], fixture("ssh-ed25519.pub").trim());
+    assert_eq!(item["sshKey"]["keyFingerprint"], fixture("ssh-ed25519.fp").trim());
+    assert_eq!(item["sshKey"]["privateKey"].as_str().unwrap().trim(), private.trim());
+
+    let made = nyx_passwords_core::ssh::generate();
+    let draft = item_draft(Kind::SshKey, "Deploy key", &[("ssh.privateKey", made.private.expose())]);
+    s.update_item(&mut store, &server, &refresh, id, &draft).await.unwrap();
+    let item = bw.item(&id.to_string());
+    assert_eq!(item["sshKey"]["publicKey"], made.public.as_str());
+    assert_eq!(item["sshKey"]["keyFingerprint"], made.fingerprint.as_str());
+
+    let bad = item_draft(Kind::SshKey, "Deploy key", &[("ssh.privateKey", "not a key")]);
+    assert!(matches!(
+        s.update_item(&mut store, &server, &refresh, id, &bad).await,
+        Err(SessionError::BadSshKey(nyx_passwords_core::ssh::SshError::Unreadable))
+    ));
+    assert_eq!(bw.item(&id.to_string())["sshKey"]["keyFingerprint"], made.fingerprint.as_str());
+}
+
+async fn signed_in(store: &mut Store, server: &Server, email: &str, password: &str) -> (Box<Session>, Secret) {
+    let SignIn::Done(s) = session::sign_in(store, server, email, &Secret::new(password), "nyx test", None).await.unwrap() else {
+        panic!("two-step login")
+    };
+    let refresh = Secret::new(s.refresh_token().unwrap().expose());
+    (s, refresh)
+}
+
+fn uuid(v: &Value) -> Uuid {
+    v.as_str().unwrap().parse().unwrap()
+}
+
+/// A member of an organization works within its permissions: read-only items can't be
+/// changed or deleted, hidden passwords can't be revealed or copied (only filled), and
+/// survive edits; items go into writable collections, change collections, and move in
+/// from the personal vault (with and without their own key, with an attachment); they
+/// don't move out. The owner's `bw` checks what the member wrote.
+#[tokio::test]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
+async fn organizations_and_permissions() {
+    let kdf = bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() };
+    let (owner_email, member_email) = (common::fresh_email("owner"), common::fresh_email("member"));
+    let password = "correct horse org battery";
+    let owner_public = common::register(&owner_email, password, &kdf).await;
+    let member_public = common::register(&member_email, password, &kdf).await;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+
+    // The owner sets up four collections with different rights for the member.
+    let mut owner_store = Store::open(&dir.path().join("owner.sqlite")).unwrap();
+    let (mut owner, owner_refresh) = signed_in(&mut owner_store, &server, &owner_email, password).await;
+    let access = Secret::new(owner.access(&server, &owner_refresh).await.unwrap().expose());
+    let org = common::create_org(access.expose(), &owner_email, &owner_public).await;
+    let team = common::create_collection(access.expose(), &org, "Team").await;
+    let team2 = common::create_collection(access.expose(), &org, "Team 2").await;
+    let vault = common::create_collection(access.expose(), &org, "Vault").await;
+    let masked = common::create_collection(access.expose(), &org, "Masked").await;
+    let rights = [
+        (team.as_str(), false, false),
+        (team2.as_str(), false, false),
+        (vault.as_str(), true, true),
+        (masked.as_str(), false, true),
+    ];
+    common::add_member(access.expose(), &org, &member_email, &member_public, &rights).await;
+    let bw = common::Bw::login(&owner_email, password);
+    let login = |name: &str, collection: &str| {
+        json!({
+            "type": 1, "name": name, "notes": null, "favorite": false, "reprompt": 0, "folderId": null,
+            "organizationId": org.id, "collectionIds": [collection],
+            "fields": [{"name": "pin", "value": "4321", "type": 1}],
+            "login": {"username": "team", "password": format!("canary-{name}-Pw!9"), "totp": "JBSWY3DPEHPK3PXP",
+                      "uris": [{"match": null, "uri": "https://team.example.com"}]},
+        })
+    };
+    let locked = uuid(&bw.create(&login("Locked", &vault))["id"]);
+    let shared = uuid(&bw.create(&login("Shared", &team))["id"]);
+    let masked_id = uuid(&bw.create(&login("Masked", &masked))["id"]);
+    drop(owner);
+
+    let mut store = Store::open(&dir.path().join("member.sqlite")).unwrap();
+    let (mut s, refresh) = signed_in(&mut store, &server, &member_email, password).await;
+    let org_id: Uuid = org.id.parse().unwrap();
+    let not_allowed = |r: Result<(), SessionError>| assert!(matches!(r, Err(SessionError::NotAllowed(_))), "{r:?}");
+
+    // Read-only, passwords hidden: no edits, no trash; no password, code key or hidden
+    // field to see; the current code, and the password for filling, still work.
+    let e = s.view.get(locked).unwrap();
+    assert!(!e.editable && !e.view_password && !e.deletable);
+    for field in [Field::Password, Field::TotpSeed, Field::Custom(0)] {
+        assert_eq!(reveal(&s.keys, &s.snapshot, locked, field).err(), Some(nyx_passwords_core::vault::RevealError::Hidden));
+    }
+    assert_eq!(reveal(&s.keys, &s.snapshot, locked, Field::Totp).unwrap().expose().len(), 6);
+    let filled = nyx_passwords_core::vault::reveal_for_use(&s.keys, &s.snapshot, locked, Field::Password).unwrap();
+    assert_eq!(filled.expose(), "canary-Locked-Pw!9");
+    let mut d = draft("Locked renamed", "x");
+    d.place = Place { organization: Some(org_id), collections: vec![vault.parse().unwrap()] };
+    not_allowed(s.update_login(&mut store, &server, &refresh, locked, &d).await);
+    not_allowed(s.trash(&mut store, &server, &refresh, locked).await);
+
+    // Writable, passwords hidden: a rename keeps the password and code key it can't see.
+    let before = bw.item(&masked_id.to_string());
+    let mut d = draft_of(&s_item(&s, masked_id, &before));
+    d.name = Secret::new("Masked renamed");
+    d.password = None;
+    d.totp = None;
+    s.update_login(&mut store, &server, &refresh, masked_id, &d).await.unwrap();
+    let after = bw.item(&masked_id.to_string());
+    assert_eq!(after["name"], "Masked renamed");
+    assert_eq!(after["login"]["password"], before["login"]["password"]);
+    assert_eq!(after["login"]["totp"], before["login"]["totp"]);
+    assert_eq!(after["passwordHistory"], before["passwordHistory"]);
+
+    // New items go into writable collections only.
+    let mut d = draft("Made by the member", "canary-member-Pw!9");
+    d.place = Place { organization: Some(org_id), collections: vec![team.parse().unwrap()] };
+    let made = s.create_login(&mut store, &server, &refresh, &d).await.unwrap();
+    let item = bw.item(&made.to_string());
+    assert_eq!(
+        (item["organizationId"].as_str(), item["login"]["password"].as_str()),
+        (Some(org.id.as_str()), Some("canary-member-Pw!9"))
+    );
+    assert_eq!(item["collectionIds"], json!([team]));
+    d.place.collections = vec![vault.parse().unwrap()];
+    assert!(matches!(s.create_login(&mut store, &server, &refresh, &d).await, Err(SessionError::NotAllowed(_))));
+
+    // Collections change within the writable ones; an item doesn't leave its organization.
+    let mut d = draft_of(&bw.item(&shared.to_string()));
+    d.place.collections = vec![team.parse().unwrap(), team2.parse().unwrap()];
+    s.update_login(&mut store, &server, &refresh, shared, &d).await.unwrap();
+    let ids: Vec<String> = serde_json::from_value(bw.item(&shared.to_string())["collectionIds"].clone()).unwrap();
+    assert!(ids.len() == 2 && ids.contains(&team) && ids.contains(&team2), "{ids:?}");
+    d.place.collections.push(vault.parse().unwrap());
+    not_allowed(s.update_login(&mut store, &server, &refresh, shared, &d).await);
+    d.place = Place::default();
+    not_allowed(s.update_login(&mut store, &server, &refresh, shared, &d).await);
+
+    // Personal items move in: one without its own key (re-encrypted, attachment and all),
+    // one with (its key rewrapped). The owner reads every field afterwards.
+    let member_bw = common::Bw::login(&member_email, password);
+    let personal = uuid(
+        &member_bw.create(&json!({
+            "type": 1, "name": "Moving in", "notes": "moving notes", "favorite": false, "reprompt": 0, "folderId": null,
+            "fields": [{"name": "recovery", "value": "moving field", "type": 1}],
+            "login": {"username": "mover", "password": "canary-move-Pw!9", "totp": "JBSWY3DPEHPK3PXP",
+                      "uris": [{"match": 1, "uri": "https://move.example.com"}]},
+            "passwordHistory": [{"lastUsedDate": "2026-01-01T00:00:00.000Z", "password": "canary-older-Pw!9"}],
+        }))["id"],
+    );
+    let file = dir.path().join("moving.txt");
+    std::fs::write(&file, "canary moving attachment\n").unwrap();
+    member_bw.attach(&personal.to_string(), &file);
+    let access = Secret::new(s.access(&server, &refresh).await.unwrap().expose());
+    let own_key = {
+        let (mut key, wrapped) = s.keys.new_item(None).unwrap();
+        let body = json!({
+            "type": 1, "name": key.encrypt("Own key moving in").unwrap(), "notes": null, "folderId": null,
+            "organizationId": null, "key": wrapped, "favorite": false, "reprompt": 0, "passwordHistory": null, "fields": null,
+            "login": {"username": key.encrypt("own").unwrap(), "password": key.encrypt("canary-own-Pw!9").unwrap(), "totp": null, "uris": null},
+            "encryptedFor": s.snapshot.profile.id,
+        });
+        drop(key);
+        server.create_cipher(&access, &body).await.unwrap().id
+    };
+    s.sync(&mut store, &server, &refresh).await.unwrap();
+    let before = member_bw.item(&personal.to_string());
+    for id in [personal, own_key] {
+        let mut d = draft_of(&member_bw.item(&id.to_string()));
+        d.place = Place { organization: Some(org_id), collections: vec![team.parse().unwrap()] };
+        s.update_login(&mut store, &server, &refresh, id, &d).await.unwrap();
+    }
+    let moved = bw.item(&personal.to_string());
+    assert_eq!(moved["organizationId"], org.id.as_str());
+    for path in [
+        &["name"][..],
+        &["notes"],
+        &["fields"],
+        &["passwordHistory"],
+        &["login", "username"],
+        &["login", "password"],
+        &["login", "totp"],
+        &["login", "uris"],
+    ] {
+        let (mut a, mut b) = (&moved, &before);
+        for key in path {
+            a = &a[*key];
+            b = &b[*key];
+        }
+        assert_eq!(a, b, "{path:?}");
+    }
+    assert_eq!(bw.attachment(&personal.to_string(), "moving.txt"), b"canary moving attachment\n");
+    let moved = bw.item(&own_key.to_string());
+    assert_eq!(
+        (moved["organizationId"].as_str(), moved["login"]["password"].as_str()),
+        (Some(org.id.as_str()), Some("canary-own-Pw!9"))
+    );
+}
+
+/// `bw`'s view of an item, with the password this account can't see taken out, as the
+/// window's draft would have it.
+fn s_item(s: &Session, id: Uuid, item: &Value) -> Value {
+    let mut item = item.clone();
+    if !s.view.get(id).unwrap().view_password {
+        item["login"]["password"] = Value::Null;
+        item["login"]["totp"] = Value::Null;
+    }
+    item
+}
+
+/// Files attached here read back in `bw` byte for byte; files `bw` attached download
+/// here the same; deleting one leaves the rest; an oversized file is refused before
+/// anything is sent.
+#[tokio::test]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
+async fn attachments_round_trip_with_bw() {
+    let email = common::fresh_email("files");
+    let password = "correct horse files battery";
+    common::register(&email, password, &bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() }).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+    let (mut s, refresh) = signed_in(&mut store, &server, &email, password).await;
+    let bw = common::Bw::login(&email, password);
+
+    let id = s.create_login(&mut store, &server, &refresh, &draft("With files", "canary-files-Pw!9")).await.unwrap();
+    // Every byte value, so nothing is treated as text on the way.
+    let binary: Vec<u8> = (0..=255u8).cycle().take(300_000).collect();
+    s.add_attachment(&mut store, &server, &refresh, id, "backup codes.bin", &binary).await.unwrap();
+    let file = dir.path().join("from-bw.txt");
+    std::fs::write(&file, "canary from bw\n").unwrap();
+    bw.run(&["sync"]);
+    bw.attach(&id.to_string(), &file);
+    s.sync(&mut store, &server, &refresh).await.unwrap();
+
+    assert_eq!(bw.attachment(&id.to_string(), "backup codes.bin"), binary);
+    let listed = s.attachments(id).unwrap();
+    let mut names: Vec<&str> = listed.iter().map(|a| a.name.expose()).collect();
+    names.sort();
+    assert_eq!(names, ["backup codes.bin", "from-bw.txt"]);
+    let theirs = listed.iter().find(|a| a.name.expose() == "from-bw.txt").unwrap();
+    // Encrypted: a type byte, IV and MAC, and the 15 bytes padded to 16.
+    assert_eq!(theirs.size, 65);
+    let got = s.download_attachment(&mut store, &server, &refresh, id, &theirs.id).await.unwrap();
+    assert_eq!(got.expose(), b"canary from bw\n");
+
+    let ours = listed.iter().find(|a| a.name.expose() == "backup codes.bin").unwrap().id.clone();
+    s.delete_attachment(&mut store, &server, &refresh, id, &ours).await.unwrap();
+    let item = bw.item(&id.to_string());
+    assert_eq!(item["attachments"].as_array().unwrap().len(), 1);
+    assert_eq!(item["login"]["password"], "canary-files-Pw!9");
+
+    let too_big = vec![0u8; nyx_passwords_core::api::MAX_ATTACHMENT + 1];
+    assert!(matches!(
+        s.add_attachment(&mut store, &server, &refresh, id, "big.bin", &too_big).await,
+        Err(SessionError::NotAllowed(_))
+    ));
+}

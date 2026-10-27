@@ -4,8 +4,8 @@
 use std::time::Duration;
 
 use gtk::{glib, prelude::*};
-use nixe_passwords_proto::Error as Code;
-use nixe_ui::widgets as w;
+use nyx_passwords_proto::Error as Code;
+use nyx_ui::widgets as w;
 
 use super::client::{self, Fail};
 use super::data::{self, Entry};
@@ -413,7 +413,7 @@ pub fn handle(ui: &Ui, e: Fail, retry: impl Fn() + 'static) {
         ui::reload(ui);
         ui::toast(ui, "That item is gone: deleted elsewhere, or no longer shared with you.");
     } else if e.is(Code::Locked) {
-        ui::set_state(ui, nixe_passwords_proto::state::LOCKED);
+        ui::set_state(ui, nyx_passwords_proto::state::LOCKED);
     } else {
         ui::toast(ui, &e.to_string());
     }

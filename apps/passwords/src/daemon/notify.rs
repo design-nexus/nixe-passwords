@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use tokio::sync::Mutex;
 use zbus::zvariant::Value;
 
-const APP_NAME: &str = "Nixe Passwords";
-const ICON: &str = "io.github.design_nexus.nixe.Passwords";
+const APP_NAME: &str = "Nyx Passwords";
+const ICON: &str = "io.github.design_nexus.nyx.Passwords";
 const SHOW_MS: i32 = 3500;
 
 #[derive(Default)]

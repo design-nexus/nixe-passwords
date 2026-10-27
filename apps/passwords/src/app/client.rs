@@ -1,3 +1,3 @@
-//! Calls to the vault daemon: the shared client in `nixe-passwords-proto`.
+//! Calls to the vault daemon: the shared client in `nyx-passwords-proto`.
 
-pub use nixe_passwords_proto::client::*;
+pub use nyx_passwords_proto::client::*;

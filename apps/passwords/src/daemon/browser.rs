@@ -10,13 +10,13 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use nixe_passwords_core::crypto::{self, PairKey};
-use nixe_passwords_core::edit::{LoginDraft, Place};
-use nixe_passwords_core::matching;
-use nixe_passwords_core::secret::Secret;
-use nixe_passwords_core::store::Pairing;
-use nixe_passwords_core::vault::{Field, reveal_for_use};
-use nixe_passwords_proto::{Error as Code, state};
+use nyx_passwords_core::crypto::{self, PairKey};
+use nyx_passwords_core::edit::{LoginDraft, Place};
+use nyx_passwords_core::matching;
+use nyx_passwords_core::secret::Secret;
+use nyx_passwords_core::store::Pairing;
+use nyx_passwords_core::vault::{Field, reveal_for_use};
+use nyx_passwords_proto::{Error as Code, state};
 use serde_json::{Value, json};
 use url::Url;
 
@@ -323,7 +323,7 @@ fn handle(st: &mut State, pairing: &str, browser: &(i32, String), request: &Valu
             Err(_) => error(Code::Failed),
         },
         Some("unlock") => {
-            if let Some(app) = super::peer::allowed_dir().map(|d| d.join("nixe-passwords")) {
+            if let Some(app) = super::peer::allowed_dir().map(|d| d.join("nyx-passwords")) {
                 let _ = std::process::Command::new(app)
                     .arg("--unlock")
                     .stdin(std::process::Stdio::null())

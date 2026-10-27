@@ -1,4 +1,4 @@
-# Nixe Passwords — security reviews
+# Nyx Passwords — security reviews
 
 Each review reads [SECURITY.md](SECURITY.md) and checks the code against it, rule by
 rule, then looks at what changed since the last one. Findings are fixed in the same
@@ -17,7 +17,7 @@ threat model was written.
 | 1. No custom cryptography | **Fixed.** The security report hashed passwords in `audit.rs`; SHA-256 and SHA-1 moved into `crypto.rs` (`password_digest`, `breach_hash`). `ssh.rs` uses `ssh-key`, now named in the rule as its one exception. Random numbers (`generate.rs`, browser pairing ids) aren't covered by the rule and stay where they are. |
 | 2. No plaintext on disk | Holds. The daemon test plants canaries and scans every file after sync, copy, edit, attachments and lock. Attachments go only where the user saves them (now always 0600, see below); the strength cache and breach results live in memory. |
 | 3. No secrets in logs and errors | Holds. The only prints are daemon start-up errors and the Settings helper's settings JSON; `Secret` redacts in `Debug`; error messages carry kinds and file paths, never values. |
-| 4. No secrets in argv or environment | Holds. `secret-tool` gets secrets on stdin; attachments pass as file handles; the one program the daemon starts (`nixe-passwords --unlock`) gets no vault data. |
+| 4. No secrets in argv or environment | Holds. `secret-tool` gets secrets on stdin; attachments pass as file handles; the one program the daemon starts (`nyx-passwords --unlock`) gets no vault data. |
 | 5. No general retrieval API | Holds. Every call that returns vault data needs the app's scope; copy and search also let Glimpse and the Assistant in when their setting is on, and return no values. Fill returns a password to a paired extension for its own origin, by design. **Doc fix:** GLIMPSE_API.md said the Settings page may list and revoke pairings; it may not, and doesn't. |
 | 6. No indexing of secrets | Holds. Search covers metadata in memory. |
 | 7. Lock drops everything | **Fixed.** A breach check that finished after a lock stored its results (ids and counts) in the window; they're now dropped. The strength cache, the editor and the item view were already cleared. |
@@ -45,7 +45,7 @@ threat model was written.
 
 ### Fuzzing (2026-10-20)
 
-`crates/nixe-passwords-core/fuzz`, with cargo-fuzz (libFuzzer, AddressSanitizer), 150 s
+`crates/nyx-passwords-core/fuzz`, with cargo-fuzz (libFuzzer, AddressSanitizer), 150 s
 per target from the seeds in `fuzz/seeds/`. No crash, hang or memory blow-up:
 
 | Target | What it feeds | Runs |
@@ -63,7 +63,7 @@ calls `pairing` covers.
 
 ### Test matrix (2026-10-20)
 
-`crates/nixe-passwords-core/tests/matrix.rs`, live against the test server with `bw`
+`crates/nyx-passwords-core/tests/matrix.rs`, live against the test server with `bw`
 or the API as the other side:
 
 - **Trashed elsewhere:** an edit from the stale copy is refused as a conflict and the

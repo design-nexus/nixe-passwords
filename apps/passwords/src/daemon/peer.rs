@@ -21,17 +21,17 @@ pub enum Scope {
     Settings,
     /// The browser bridge: sealed messages from a paired extension (`Relay`) only.
     Browser,
-    /// Nixe Assistant's Passwords ability: status, search and copy, when turned on.
+    /// Nyx Assistant's Passwords ability: status, search and copy, when turned on.
     Assistant,
 }
 
 /// The executables allowed to connect, by file name, and their scopes.
 const PEERS: &[(&str, Scope)] = &[
-    ("nixe-passwords", Scope::App),
-    ("nixe-glimpse", Scope::Glimpse),
-    ("nixe-passwords-settings", Scope::Settings),
-    ("nixe-passwords-bridge", Scope::Browser),
-    ("nixe-passwords-assistant", Scope::Assistant),
+    ("nyx-passwords", Scope::App),
+    ("nyx-glimpse", Scope::Glimpse),
+    ("nyx-passwords-settings", Scope::Settings),
+    ("nyx-passwords-bridge", Scope::Browser),
+    ("nyx-passwords-assistant", Scope::Assistant),
 ];
 
 /// Browsers that start the bridge, by executable name, and what they're called in the
@@ -140,14 +140,14 @@ mod tests {
     #[test]
     fn scopes_by_name_and_place() {
         let dir = Path::new("/home/u/.local/bin");
-        assert_eq!(scope_of(&dir.join("nixe-passwords"), dir), Some(Scope::App));
-        assert_eq!(scope_of(&dir.join("nixe-glimpse"), dir), Some(Scope::Glimpse));
-        assert_eq!(scope_of(&dir.join("nixe-passwords-assistant"), dir), Some(Scope::Assistant));
-        assert_eq!(scope_of(&dir.join("nixe-passwords-settings"), dir), Some(Scope::Settings));
-        assert_eq!(scope_of(&dir.join("nixe-passwords-bridge"), dir), Some(Scope::Browser));
-        assert_eq!(scope_of(&dir.join("nixe-passwordsd"), dir), None);
-        assert_eq!(scope_of(Path::new("/tmp/nixe-passwords"), dir), None);
-        assert_eq!(scope_of(Path::new("/home/u/.local/bin/nixe-glimpse (deleted)"), dir), None);
+        assert_eq!(scope_of(&dir.join("nyx-passwords"), dir), Some(Scope::App));
+        assert_eq!(scope_of(&dir.join("nyx-glimpse"), dir), Some(Scope::Glimpse));
+        assert_eq!(scope_of(&dir.join("nyx-passwords-assistant"), dir), Some(Scope::Assistant));
+        assert_eq!(scope_of(&dir.join("nyx-passwords-settings"), dir), Some(Scope::Settings));
+        assert_eq!(scope_of(&dir.join("nyx-passwords-bridge"), dir), Some(Scope::Browser));
+        assert_eq!(scope_of(&dir.join("nyx-passwordsd"), dir), None);
+        assert_eq!(scope_of(Path::new("/tmp/nyx-passwords"), dir), None);
+        assert_eq!(scope_of(Path::new("/home/u/.local/bin/nyx-glimpse (deleted)"), dir), None);
         assert_eq!(scope_of(Path::new("/usr/bin/python3"), dir), None);
     }
 

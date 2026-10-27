@@ -1,5 +1,5 @@
 // The extension's pairing derivation, through WebCrypto exactly as background.js does
-// it, on fixed keys. crates/nixe-passwords-core's crypto tests assert the same output
+// it, on fixed keys. crates/nyx-passwords-core's crypto tests assert the same output
 // from the daemon's side (RustCrypto), so the two can't drift apart.
 //
 //   node apps/passwords/browser/test/pairing-vector.mjs

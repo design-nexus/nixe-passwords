@@ -6,20 +6,20 @@
 # Data, a test CA and the server certificate live in target/vaultwarden-test/ (removed
 # by `reset`). Only loopback is bound. Then run the tests with:
 #
-#   NIXE_PW_TEST_SERVER=https://127.0.0.1:8087 \
-#   NIXE_PW_TEST_CA=$PWD/target/vaultwarden-test/ca.pem \
-#     cargo test -p nixe-passwords-core -- --ignored --nocapture
+#   NYX_PW_TEST_SERVER=https://127.0.0.1:8087 \
+#   NYX_PW_TEST_CA=$PWD/target/vaultwarden-test/ca.pem \
+#     cargo test -p nyx-passwords-core -- --ignored --nocapture
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 dir="$root/target/vaultwarden-test"
-name=nixe-vw-test
+name=nyx-vw-test
 image=vaultwarden/server:1.37.4
 
 certs() {
   [[ -f $dir/ca.pem && -f $dir/data/cert.pem ]] && return
   mkdir -p "$dir/data"
-  openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=nixe-passwords test CA" \
+  openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=nyx-passwords test CA" \
     -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign \
     -keyout "$dir/ca-key.pem" -out "$dir/ca.pem" 2>/dev/null
   openssl req -newkey rsa:2048 -nodes -subj /CN=127.0.0.1 \

@@ -1,12 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["apps/passwords", "crates/nixe-passwords-core", "crates/nixe-passwords-proto"]
+members = ["apps/passwords", "crates/nyx-passwords-core", "crates/nyx-passwords-proto"]
 
 [workspace.package]
 edition = "2024"
 license = "MIT"
 authors = ["Ken Smith"]
-repository = "https://github.com/design-nexus/nixe-passwords"
+repository = "https://github.com/design-nexus/nyx-passwords"
 
 [profile.release]
 lto = "thin"

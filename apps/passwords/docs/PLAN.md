@@ -1,4 +1,4 @@
-# Nixe Passwords — plan
+# Nyx Passwords — plan
 
 Design: [ARCHITECTURE.md](ARCHITECTURE.md). Rules: [SECURITY.md](SECURITY.md).
 Checklist: [TASKS.md](TASKS.md).
@@ -15,9 +15,9 @@ goes in before the spike passes.**
    and Argon2id (3 iterations, 64 MiB, parallelism 4). Add a login with TOTP, a note,
    a card, an identity, a folder, an organization with a collection, and a cipher with
    its own key.
-3. **Build check:** `nixe-passwords-core` with `bitwarden-crypto =4.0.0` builds in the
+3. **Build check:** `nyx-passwords-core` with `bitwarden-crypto =4.0.0` builds in the
    workspace, and `cargo deny check` passes.
-4. **Round trip:** an ignored-by-default test (`NIXE_PW_TEST_SERVER=http://127.0.0.1:8087`)
+4. **Round trip:** an ignored-by-default test (`NYX_PW_TEST_SERVER=http://127.0.0.1:8087`)
    runs prelogin, token, sync, then decrypts every item. Output matches `bw get item`.
 5. **Record the results** in DEPENDENCIES.md (Vaultwarden behaviour table).
 
@@ -49,7 +49,7 @@ the next.
    - the sidebar: All items, Favorites, kinds, folders, collections; plus a Trash page;
    - the settings card;
    - checked at normal width and at 800 px.
-6. **Install wiring:** install.sh (ALL, app_info, unit, desktop file, icon), `bin/nixe`,
+6. **Install wiring:** install.sh (ALL, app_info, unit, desktop file, icon), `bin/nyx`,
    uninstall, Settings' app list, the README.
 
 **Offline:** reading and copying work from the stored snapshot. Edits need the server;
@@ -64,7 +64,7 @@ the app says so when it's unreachable.
 3. **Clipboard check:** test which history managers honor the sensitive hint
    (cliphist, Omarchy's); record the results in SECURITY.md, and show the finding on
    the Settings page.
-4. **Settings extension:** `nixe-passwords-settings`.
+4. **Settings extension:** `nyx-passwords-settings`.
 5. **Icons:** opt-in site icons from the server's icon service.
 
 ## Phase 3: browsers
@@ -104,7 +104,7 @@ the app says so when it's unreachable.
 
 | Decision | Choice |
 | --- | --- |
-| Licence | GPL-3.0-only for `nixe-passwords` and `nixe-passwords-core`; the protocol crate is MIT |
+| Licence | GPL-3.0-only for `nyx-passwords` and `nyx-passwords-core`; the protocol crate is MIT |
 | Crypto | `bitwarden-crypto`, pinned, behind one adapter module |
 | Testing | A local throwaway Vaultwarden; never the real server without asking |
 | IPC | Peer-to-peer D-Bus on a private socket, not the session bus |

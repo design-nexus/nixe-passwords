@@ -1,10 +1,10 @@
-# Nixe Passwords — passkeys
+# Nyx Passwords — passkeys
 
 Status: investigation (Phase 4). Nothing here is built, and passkeys aren't advertised
 until the whole flow works and is tested. What Passwords does today: it keeps every
 passkey intact. Edits send them back as they were, and moving an item into an
 organization re-encrypts them with the item (both covered by live tests in
-`crates/nixe-passwords-core/tests/edit.rs`). It doesn't show or use them.
+`crates/nyx-passwords-core/tests/edit.rs`). It doesn't show or use them.
 
 Checked 2026-10-20 against Bitwarden's clients and SDK source and its contributor
 documentation, and against Vaultwarden 1.37.4 with `bw` 2026.2.0.
@@ -58,7 +58,7 @@ and `.get`, keeping the originals. When the user declines Bitwarden, it calls th
 browser's own. Another password manager doing the same can get in the way; 1Password
 has been reported to stop Bitwarden's override in Firefox.
 
-For Nixe Passwords this means:
+For Nyx Passwords this means:
 
 1. **A script in every page's main world.** Today the extension touches a page only
    when you click it (`activeTab`). Passkeys need a content script on every page, plus

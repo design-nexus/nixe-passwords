@@ -7,8 +7,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gtk::{gdk, glib, prelude::*};
-use nixe_passwords_proto::state;
-use nixe_ui::{chrome, widgets as w};
+use nyx_passwords_proto::state;
+use nyx_ui::{chrome, widgets as w};
 
 use super::data::{self, Listing};
 use super::{account, client, detail, editor, prefs, security, settings, theme};
@@ -69,7 +69,7 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     install_icons();
     let window = gtk::ApplicationWindow::builder().application(app).default_width(1120).default_height(800).build();
     window.add_css_class("passwords-window");
-    window.set_icon_name(Some("io.github.design_nexus.nixe.Passwords"));
+    window.set_icon_name(Some("io.github.design_nexus.nyx.Passwords"));
     window.set_titlebar(Some(&w::hbox(0)));
     chrome::set_title(&window, "Passwords", "");
     let overlay = gtk::Overlay::new();
@@ -148,7 +148,7 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
         .vscrollbar_policy(gtk::PolicyType::External)
         .hexpand(true)
         .vexpand(true)
-        .child(&nixe_ui::clamp::Clamp::new(&details, 920))
+        .child(&nyx_ui::clamp::Clamp::new(&details, 920))
         .build();
     detail_scroll.add_css_class("item-detail-pane");
     panes.append(&detail_scroll);
@@ -195,7 +195,7 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     toast_box.set_visible(false);
     overlay.add_overlay(&toast_box);
 
-    let start = section.map(str::to_string).unwrap_or_else(|| nixe_theme::start_page("all", &prefs::get().last_section));
+    let start = section.map(str::to_string).unwrap_or_else(|| nyx_theme::start_page("all", &prefs::get().last_section));
     let ui = Rc::new(State {
         window,
         overlay,
@@ -278,9 +278,9 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
         }
         glib::ControlFlow::Continue
     });
-    nixe_ui::keys::install(
+    nyx_ui::keys::install(
         &ui.window,
-        nixe_ui::keys::Common {
+        nyx_ui::keys::Common {
             settings: Some(open_settings),
             shortcuts: Some(show_shortcuts),
             close: true,
@@ -307,8 +307,8 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
             gdk::Key::o | gdk::Key::O if ctrl && shift && open => detail::copy_selected(&u, "totp"),
             gdk::Key::F1 => show_shortcuts(),
             gdk::Key::Escape => {
-                if nixe_ui::settings_card::is_open() {
-                    nixe_ui::settings_card::escape();
+                if nyx_ui::settings_card::is_open() {
+                    nyx_ui::settings_card::escape();
                 } else if !u.search.text().is_empty() {
                     u.search.set_text("");
                     u.search.grab_focus();
@@ -430,7 +430,7 @@ pub fn reload(ui: &Ui) {
                 detail::show(&ui);
                 security::refresh(&ui);
             }
-            Err(e) if e.is(nixe_passwords_proto::Error::Locked) => set_state(&ui, state::LOCKED),
+            Err(e) if e.is(nyx_passwords_proto::Error::Locked) => set_state(&ui, state::LOCKED),
             Err(e) => toast(&ui, &e.to_string()),
         }
     });
@@ -694,7 +694,7 @@ pub fn nav(ui: &Ui) {
 pub fn layout(ui: &Ui) {
     let width = if ui.window.width() > 0 { ui.window.width() } else { ui.window.default_width() };
     let narrow = width > 0 && width < 980;
-    nixe_ui::settings_card::fit(&ui.window);
+    nyx_ui::settings_card::fit(&ui.window);
     ui.narrow.set(narrow);
     compact_sidebar(ui);
     let empty = visible(ui).is_empty();
@@ -744,11 +744,11 @@ fn find(ui: &Ui) {
 }
 
 fn install_icons() {
-    let dir = nixe_core::paths::cache_dir().join("icons");
+    let dir = nyx_core::paths::cache_dir().join("icons");
     let _ = std::fs::create_dir_all(&dir);
     for (name, svg) in [
-        ("nixe-card-symbolic.svg", include_str!("../../data/icons/nixe-card-symbolic.svg")),
-        ("nixe-key-symbolic.svg", include_str!("../../data/icons/nixe-key-symbolic.svg")),
+        ("nyx-card-symbolic.svg", include_str!("../../data/icons/nyx-card-symbolic.svg")),
+        ("nyx-key-symbolic.svg", include_str!("../../data/icons/nyx-key-symbolic.svg")),
     ] {
         let _ = std::fs::write(dir.join(name), svg);
     }

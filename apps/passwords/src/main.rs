@@ -1,14 +1,14 @@
-//! Nixe Passwords: the window. The vault itself lives in `nixe-passwordsd`.
+//! Nyx Passwords: the window. The vault itself lives in `nyx-passwordsd`.
 
 mod app;
 
 use gtk::{gio, glib, prelude::*};
 
 fn main() -> glib::ExitCode {
-    nixe_core::app::init(nixe_passwords::daemon::APP);
+    nyx_core::app::init(nyx_passwords::daemon::APP);
     let args: Vec<_> = std::env::args().collect();
     if args.iter().any(|s| s == "--help" || s == "-h") {
-        println!("Usage: nixe-passwords [--unlock] [--section all|favorites|login|note|card|identity|trash|settings]");
+        println!("Usage: nyx-passwords [--unlock] [--section all|favorites|login|note|card|identity|trash|settings]");
         return glib::ExitCode::SUCCESS;
     }
     if std::env::var_os("GSK_RENDERER").is_none() {
@@ -16,7 +16,7 @@ fn main() -> glib::ExitCode {
         unsafe { std::env::set_var("GSK_RENDERER", "ngl") };
     }
     let app = gtk::Application::builder()
-        .application_id("io.github.design_nexus.nixe.Passwords")
+        .application_id("io.github.design_nexus.nyx.Passwords")
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
     app.connect_command_line(|app, cl| {

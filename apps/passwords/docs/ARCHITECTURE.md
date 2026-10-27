@@ -1,18 +1,18 @@
-# Nixe Passwords — architecture
+# Nyx Passwords — architecture
 
-Nixe Passwords is a desktop client for a self-hosted Vaultwarden server. It speaks the
+Nyx Passwords is a desktop client for a self-hosted Vaultwarden server. It speaks the
 Bitwarden client API, so the same account keeps working in the official Bitwarden apps,
 the web vault and the `bw` CLI. There is no server component.
 
 ## Components
 
 ```
- nixe-passwords (GTK) ─┐
- nixe-glimpse          ─┤   peer-to-peer D-Bus over
- nixe-passwords-settings┼── $XDG_RUNTIME_DIR/nixe-passwords/bus ──┐
- nixe-passwords-bridge ─┘   (dir 0700, SO_PEERCRED, exe allowlist) │
+ nyx-passwords (GTK) ─┐
+ nyx-glimpse          ─┤   peer-to-peer D-Bus over
+ nyx-passwords-settings┼── $XDG_RUNTIME_DIR/nyx-passwords/bus ──┐
+ nyx-passwords-bridge ─┘   (dir 0700, SO_PEERCRED, exe allowlist) │
    ▲ Native Messaging                                             ▼
- browser extension                                         nixe-passwordsd
+ browser extension                                         nyx-passwordsd
                                                     ┌──────────┼───────────────┬───────────────┐
                                                     ▼          ▼               ▼               ▼
                                               Vaultwarden  vault.sqlite   Secret Service   Wayland
@@ -22,11 +22,11 @@ the web vault and the `bw` CLI. There is no server component.
 
 | Process | Package / licence | Holds keys | Role |
 | --- | --- | --- | --- |
-| `nixe-passwordsd` | `apps/passwords`, GPL-3.0-only | yes, the only one | Session, sync, local store, lock state, search, clipboard owner, policy |
-| `nixe-passwords` | `apps/passwords`, GPL-3.0-only | no | The window: login, unlock, browse, edit, settings |
-| `nixe-passwords-settings` | `apps/passwords`, GPL-3.0-only | no | Settings extension helper (pages JSON) |
-| `nixe-passwords-bridge` | `apps/passwords`, GPL-3.0-only | no | Native Messaging host: a relay between one browser connection and the daemon |
-| Glimpse `pw` provider | `apps/glimpse`, MIT | no | Native provider in Glimpse; links only `nixe-passwords-proto` |
+| `nyx-passwordsd` | `apps/passwords`, GPL-3.0-only | yes, the only one | Session, sync, local store, lock state, search, clipboard owner, policy |
+| `nyx-passwords` | `apps/passwords`, GPL-3.0-only | no | The window: login, unlock, browse, edit, settings |
+| `nyx-passwords-settings` | `apps/passwords`, GPL-3.0-only | no | Settings extension helper (pages JSON) |
+| `nyx-passwords-bridge` | `apps/passwords`, GPL-3.0-only | no | Native Messaging host: a relay between one browser connection and the daemon |
+| Glimpse `pw` provider | `apps/glimpse`, MIT | no | Native provider in Glimpse; links only `nyx-passwords-proto` |
 
 The daemon is the only process that derives keys, decrypts ciphers or touches the
 clipboard with a secret. The others send requests and get back metadata or a result
@@ -37,9 +37,9 @@ plaintext after a user action (reveal, edit).
 
 ```
 crates/
-  nixe-passwords-proto/      MIT. Interface name, object path, socket path, scopes,
+  nyx-passwords-proto/      MIT. Interface name, object path, socket path, scopes,
                              wire types, error names. No crypto, no I/O beyond paths.
-  nixe-passwords-core/       GPL-3.0-only. Everything that knows Bitwarden.
+  nyx-passwords-core/       GPL-3.0-only. Everything that knows Bitwarden.
     src/secret.rs            Redacting newtypes (Debug/Display/Serialize never print).
     src/crypto.rs            The only module that names bitwarden-crypto types.
     src/api/                 identity (prelogin, token, refresh), api (sync, ciphers).
@@ -53,10 +53,10 @@ crates/
     src/matching.rs          URI match rules (base domain via PSL, host, starts with,
                              exact, regex, never).
 apps/passwords/
-  src/main.rs                GTK app (nixe-passwords).
-  src/bin/nixe-passwordsd.rs Daemon.
-  src/bin/nixe-passwords-settings.rs
-  src/bin/nixe-passwords-bridge.rs   (Phase 3)
+  src/main.rs                GTK app (nyx-passwords).
+  src/bin/nyx-passwordsd.rs Daemon.
+  src/bin/nyx-passwords-settings.rs
+  src/bin/nyx-passwords-bridge.rs   (Phase 3)
   src/daemon/                server (p2p zbus), peers, policy, lock, clipboard, notify.
   src/ui/                    window, pages, item detail, unlock, settings_dialog.
   data/                      desktop file, systemd unit template.
@@ -64,7 +64,7 @@ apps/passwords/
   docs/                      this folder.
 ```
 
-`nixe-core` gets a default-on `gtk` feature. The daemon and the bridge use `app`,
+`nyx-core` gets a default-on `gtk` feature. The daemon and the bridge use `app`,
 `paths` and `cmd::atomic_write` with `default-features = false`. Existing apps don't
 change.
 
@@ -72,14 +72,14 @@ change.
 
 | What | Where | Form |
 | --- | --- | --- |
-| Account state: server URL, email, KDF parameters, the protected user key, private key, org keys | `~/.local/share/nixe-passwords/vault.sqlite` | As the server sends them: EncStrings, never decrypted on disk |
+| Account state: server URL, email, KDF parameters, the protected user key, private key, org keys | `~/.local/share/nyx-passwords/vault.sqlite` | As the server sends them: EncStrings, never decrypted on disk |
 | Sync snapshot: ciphers, folders, collections, policies | same database | Raw server JSON per object, encrypted fields untouched |
-| Refresh token | Secret Service (`application nixe-passwords server <url> account <email>`) | Through `secret-tool` stdin, as Git does |
+| Refresh token | Secret Service (`application nyx-passwords server <url> account <email>`) | Through `secret-tool` stdin, as Git does |
 | Access token | daemon memory | |
 | Device identifier | `vault.sqlite` | A random UUID, created once per install |
-| Preferences | `~/.config/nixe-passwords/settings.toml` | Written by the app (`prefs_store!`); the daemon reads it and reloads when its mtime changes |
+| Preferences | `~/.config/nyx-passwords/settings.toml` | Written by the app (`prefs_store!`); the daemon reads it and reloads when its mtime changes |
 | Decrypted fields, search index, keys | daemon memory only | Zeroized on lock |
-| Site icons (opt-in, Phase 2) | `~/.cache/nixe-passwords/icons/` | PNGs from the server's icon service |
+| Site icons (opt-in, Phase 2) | `~/.cache/nyx-passwords/icons/` | PNGs from the server's icon service |
 
 The database and its directory are created 0600/0700 under umask 077. SQLite runs with
 `secure_delete=ON` and `journal_mode=WAL`. Because the snapshot is stored as the server
@@ -138,7 +138,7 @@ for both.
   already on the item keeps its match rule.
 
 **Unlock with the keyring** (opt-in): the daemon saves the user key in Secret Service
-(`application=nixe-passwords-unlock`, so a lookup for the session token can't find
+(`application=nyx-passwords-unlock`, so a lookup for the session token can't find
 it) and can then open the local copy with it. The key is checked against the account's
 private key; one that no longer fits is removed. Signing out removes it. Fingerprint
 unlock waits for hardware to test it on: it would gate this same key behind fprintd.
@@ -185,13 +185,13 @@ clears any clipboard value this daemon still owns.
 ## IPC
 
 - **Vault traffic** goes over a peer-to-peer zbus connection on
-  `$XDG_RUNTIME_DIR/nixe-passwords/bus`. There is no message bus in between, so
+  `$XDG_RUNTIME_DIR/nyx-passwords/bus`. There is no message bus in between, so
   `dbus-monitor` can't observe it.
-  - Interface `io.github.design_nexus.nixe.Passwords1` at `/io/github/design_nexus/nixe/Passwords`.
+  - Interface `io.github.design_nexus.nyx.Passwords1` at `/io/github/design_nexus/nyx/Passwords`.
   - Methods and scopes are in [GLIMPSE_API.md](GLIMPSE_API.md).
 - **Peer identification:** SO_PEERCRED gives the peer's uid and pid. The uid must match
   the daemon's, and `/proc/<pid>/exe` must be a known binary. That fixes the peer's scope.
-- **Session bus:** the daemon owns `io.github.design_nexus.nixe.Passwords` only for
+- **Session bus:** the daemon owns `io.github.design_nexus.nyx.Passwords` only for
   single-instance and activation. It emits `LockStateChanged(s)` with no vault data.
 - **Native Messaging:** described in [NATIVE_MESSAGING.md](NATIVE_MESSAGING.md).
 
@@ -206,7 +206,7 @@ clears any clipboard value this daemon still owns.
   `extension.toml`). Category `Accounts`. Pages: server, sync, lock timeout, clipboard
   timeout, browser pairing, Glimpse, notifications.
 - **Assistant:** the `passwords` ability (`apps/assistant/abilities/passwords`) runs
-  `nixe-passwords-assistant`, an MCP server on stdio that is a daemon peer of its own
+  `nyx-passwords-assistant`, an MCP server on stdio that is a daemon peer of its own
   (`assistant` scope: status, search, copy). `passwords.find` returns metadata;
   `passwords.copy` returns only that it copied. Both are `assistant-policy`'s `Secrets`
   capability: always asked, by key press, one call at a time. The daemon refuses the peer
@@ -217,8 +217,8 @@ clears any clipboard value this daemon still owns.
 
 ## Processes and lifetime
 
-`nixe-passwordsd` runs as a systemd user service (`PartOf=graphical-session.target`,
+`nyx-passwordsd` runs as a systemd user service (`PartOf=graphical-session.target`,
 `UMask=0077`, `Restart=on-failure`), with a `flock` on its runtime directory against a
 second instance. The app, Glimpse and the bridge start it with
-`systemctl --user start nixe-passwords.service` when the socket is missing. The service
+`systemctl --user start nyx-passwords.service` when the socket is missing. The service
 has no `ExecStart` arguments carrying data.

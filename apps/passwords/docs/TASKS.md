@@ -1,18 +1,18 @@
-# Nixe Passwords — tasks
+# Nyx Passwords — tasks
 
 ## Phase 0
 - [x] Inspect Glimpse, Settings, Assistant, shared crates and STYLE.md
 - [x] Evaluate the Bitwarden SDK and alternatives (DEPENDENCIES.md)
 - [x] Architecture, threat model, plan, Glimpse and Native Messaging specs
 - [x] Local Vaultwarden container and test accounts (PBKDF2, Argon2id) — `scripts/test-server.sh`
-- [x] `nixe-passwords-core` builds with `bitwarden-crypto =4.0.0` (25 s, 102 new crates, no existing versions changed)
+- [x] `nyx-passwords-core` builds with `bitwarden-crypto =4.0.0` (25 s, 102 new crates, no existing versions changed)
 - [x] `cargo deny` passes (rustls → 0.23.46 workspace-wide; RUSTSEC-2023-0071 accepted with reason)
 - [x] Spike test: prelogin → token → sync → decrypt all items, matches `bw` (plus write, conflict, refresh, trash)
 - [x] Record Vaultwarden behaviour in DEPENDENCIES.md
 
 ## Phase 1
-- [x] `nixe-core`: default-on `gtk` feature (daemon links no GTK; checked with ldd)
-- [x] `nixe-passwords-proto`: names, socket path, wire types, error names
+- [x] `nyx-core`: default-on `gtk` feature (daemon links no GTK; checked with ldd)
+- [x] `nyx-passwords-proto`: names, socket path, wire types, error names
 - [x] core `secret`: redacting types + tests
 - [x] core `crypto`: adapter on bitwarden-crypto's KeyStore (KDF with upper limits and downgrade check, server hash, user/private/org keys, item keys, strict EncString parsing, URI checksum)
 - [x] core `model`: encrypted wire models, exact round trip of unknown fields and types, request bodies with `encryptedFor`
@@ -29,25 +29,25 @@
 - [x] daemon: lock timer, Hyprland screen lock, logind Lock / PrepareForSleep, lock on stop (written; screen lock and sleep not yet tried on the desktop)
 - [x] daemon: clipboard owner, sensitive hint, clear-if-unchanged, paste once (tried on the desktop 2026-10-19: hint offered, cleared on time; paste once not tried)
 - [x] daemon: notifications without values (tried 2026-10-19: "Password copied" / "Clears in 10 s", no value)
-- [x] daemon: systemd unit (`data/nixe-passwords.service`, verified; installed in the install step)
+- [x] daemon: systemd unit (`data/nyx-passwords.service`, verified; installed in the install step)
 - [x] app: server setup, sign in, two-step login (authenticator, email), unlock, sign out
 - [x] app: sidebar, item list, item detail, reveal/copy (through the daemon), login editor with generator, trash with Undo, re-prompting items
 - [x] daemon: master-password re-prompt (`Reprompt`, `VerifyPassword`), `Conflict` error, sync retried when an edit lands during its fetch
 - [x] app: settings card (vault, clipboard, generator, integrations, window, keyboard)
 - [x] app: checked at 1120 px and 800 px (debug snapshot mode, `PASSWORDS_SNAPSHOT`)
-- [x] install.sh, bin/nixe, uninstall.sh, Settings app list, icon, README, LICENSE
+- [x] install.sh, bin/nyx, uninstall.sh, Settings app list, icon, README, LICENSE
 - [x] Compatibility check against `bw` (`tests/edit.rs`): logins made here read back in `bw`; editing items `bw` wrote keeps custom fields of every kind, match rules, passkeys, older password history, attachments, an item's own key and an organization item's collection. Fixed on the way: every save reset the password's date, even with the password unchanged
 - [ ] The same check by hand in the web vault (it shares `bw`'s client code)
 
 ## Phase 2 — Glimpse
 - [x] Glimpse native provider (`apps/glimpse/src/pw.rs`, parser in `src/passwords.rs`), prefix routing that keeps `pw` queries from every other provider, Enter / Ctrl+Enter / Alt+Enter / Ctrl+O / Ctrl+C, hints, locked / signed-out / unavailable / help rows
-- [x] Shared gio client in `nixe-passwords-proto` (`client` feature), used by the window and Glimpse; Glimpse links no GPL code
+- [x] Shared gio client in `nyx-passwords-proto` (`client` feature), used by the window and Glimpse; Glimpse links no GPL code
 - [x] Notifications (tried on the desktop); clipboard: no history manager installed here, so the survey of which ones honor the hint is still open
-- [x] Settings extension helper (`nixe-passwords-settings`, Accounts): status, lock, sync, locking, clipboard, sync interval, Glimpse switch
+- [x] Settings extension helper (`nyx-passwords-settings`, Accounts): status, lock, sync, locking, clipboard, sync interval, Glimpse switch
 
 ## Phase 3 — browsers
 - [x] Daemon: URL matching under Bitwarden's rules (`matching.rs`), pairing (X25519, HKDF, AES-GCM in `crypto.rs`), sealed requests with replay protection, per-page fills, site context for Glimpse
-- [x] Bridge (`nixe-passwords-bridge`), host manifests (installer), pairing confirmation in the window and a Browsers settings group
+- [x] Bridge (`nyx-passwords-bridge`), host manifests (installer), pairing confirmation in the window and a Browsers settings group
 - [x] End-to-end test with the real bridge and a stand-in browser (`tests/daemon.rs`); WebCrypto test vector
 - [x] Extension (`browser/`): pairing, popup, fill (origin re-checked in the page), one-time codes, generate into sign-up forms, unlock, Ctrl+Shift+L
 - [x] Extension: saving the login typed into a page ("Save login": new, or a new password for the same username)
@@ -58,7 +58,7 @@
 See PLAN.md.
 - [x] Phase 5: threat-model review against the code ([REVIEW.md](REVIEW.md)); six fixes
 - [x] Phase 5: offline and conflict test matrix (`tests/matrix.rs`); items gone from the server now leave this copy at once
-- [x] Phase 5: fuzzing (`crates/nixe-passwords-core/fuzz`, six targets, `run.sh`); first run found nothing
+- [x] Phase 5: fuzzing (`crates/nyx-passwords-core/fuzz`, six targets, `run.sh`); first run found nothing
 - [x] Item view: card, identity and SSH key fields and custom fields, with copy and reveal (`Fields`; secret values only through `Reveal`)
 - [x] Editing notes, cards and identities (`CreateItem`, `UpdateItem`; fields the app doesn't know are kept)
 - [x] Editing SSH keys: generate (Ed25519) or import an OpenSSH private key; the public key and fingerprint always come from it
@@ -66,7 +66,7 @@ See PLAN.md.
 - [x] Unlock with the keyring (opt-in, trade-off in the setting; tested against a private keyring that never prompts)
 - [ ] Fingerprint unlock (fprintd): needs a reader to test on; none here
 - [x] Passkeys investigation ([PASSKEYS.md](PASSKEYS.md)): storage format, what the official clients do as an authenticator, the extension and daemon design, interop tests; building it waits
-- [x] Assistant ability: `nixe-passwords-assistant` (MCP, `assistant` scope, off by default), `abilities/passwords`, `Secrets` capability in assistant-policy; tested over the socket and in the policy tests (the Assistant itself is reinstalled separately)
+- [x] Assistant ability: `nyx-passwords-assistant` (MCP, `assistant` scope, off by default), `abilities/passwords`, `Secrets` capability in assistant-policy; tested over the socket and in the policy tests (the Assistant itself is reinstalled separately)
 - [x] Security report: weak (zxcvbn), reused and old passwords in memory, as a Security section; breach check through Have I Been Pwned's range API on request (prefixes only, padded), tested against a stand-in server
 - [x] Attachments: list, save to a chosen file, attach, delete; the daemon reads and writes the file through a handle the window passes, so the window never holds the contents
 - [x] Organizations: permissions enforced (read-only items, hidden passwords, delete and restore), new items in writable collections, changing collections, moving personal items in (rewrapped or re-encrypted, attachments included); live test with an owner and a member

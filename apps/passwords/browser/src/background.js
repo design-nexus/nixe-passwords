@@ -1,4 +1,4 @@
-// Nixe Passwords for the browser: the link to the Passwords app on this computer
+// Nyx Passwords for the browser: the link to the Passwords app on this computer
 // (docs/NATIVE_MESSAGING.md). The vault stays in the app; this asks it, over the
 // native messaging host, for the logins of the page in front, one at a time.
 //
@@ -6,7 +6,7 @@
 // and the app know, so the host in between can't read or forge them.
 
 const api = globalThis.browser ?? globalThis.chrome;
-const HOST = "io.github.design_nexus.nixe.passwords";
+const HOST = "io.github.design_nexus.nyx.passwords";
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
@@ -66,6 +66,7 @@ async function pair() {
   const salt = concat(pub, theirs);
   const derive = (info, bits) =>
     crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info: enc.encode(info) }, ikm, bits);
+  // Protocol labels from before the rename; the daemon uses the same ones.
   const key = await derive("nixe-passwords pair v1", 256);
   const code = String(new DataView(await derive("nixe-passwords code v1", 32)).getUint32(0) % 1000000).padStart(6, "0");
   await api.storage.local.set({ pairing: { id: reply.p, key: b64(key) } });

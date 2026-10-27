@@ -1,9 +1,9 @@
 //! The real daemon in a scratch session: who may connect, what each peer may ask, and
-//! (with NIXE_PW_TEST_SERVER) a signed-in vault seen from the app and from Glimpse.
+//! (with NYX_PW_TEST_SERVER) a signed-in vault seen from the app and from Glimpse.
 //!
 //! Clients must be suite binaries next to the daemon, so the test copies the daemon into
-//! a temp directory together with copies of this test executable named `nixe-passwords`
-//! and `nixe-glimpse`; each copy re-runs `client` below in that role.
+//! a temp directory together with copies of this test executable named `nyx-passwords`
+//! and `nyx-glimpse`; each copy re-runs `client` below in that role.
 //!
 //! The daemon gets no Wayland or Hyprland environment (a copy can't reach the real
 //! clipboard), an empty PATH (no keyring), and notifications off.
@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-const OBJECT: &str = "/io/github/design_nexus/nixe/Passwords";
-const IFACE: &str = "io.github.design_nexus.nixe.Passwords1";
+const OBJECT: &str = "/io/github/design_nexus/nyx/Passwords";
+const IFACE: &str = "io.github.design_nexus.nyx.Passwords1";
 
 struct Scratch {
     dir: tempfile::TempDir,
@@ -37,20 +37,20 @@ impl Scratch {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        std::fs::copy(env!("CARGO_BIN_EXE_nixe-passwordsd"), bin.join("nixe-passwordsd")).unwrap();
+        std::fs::copy(env!("CARGO_BIN_EXE_nyx-passwordsd"), bin.join("nyx-passwordsd")).unwrap();
         let me = std::env::current_exe().unwrap();
-        for name in ["nixe-passwords", "nixe-glimpse", "stranger", "firefox"] {
+        for name in ["nyx-passwords", "nyx-glimpse", "stranger", "firefox"] {
             std::fs::copy(&me, bin.join(name)).unwrap();
         }
-        std::fs::copy(env!("CARGO_BIN_EXE_nixe-passwords-bridge"), bin.join("nixe-passwords-bridge")).unwrap();
-        std::fs::copy(env!("CARGO_BIN_EXE_nixe-passwords-assistant"), bin.join("nixe-passwords-assistant")).unwrap();
-        let config = dir.path().join("config/nixe-passwords");
+        std::fs::copy(env!("CARGO_BIN_EXE_nyx-passwords-bridge"), bin.join("nyx-passwords-bridge")).unwrap();
+        std::fs::copy(env!("CARGO_BIN_EXE_nyx-passwords-assistant"), bin.join("nyx-passwords-assistant")).unwrap();
+        let config = dir.path().join("config/nyx-passwords");
         std::fs::create_dir_all(&config).unwrap();
         std::fs::write(config.join("settings.toml"), format!("notify_copies = false\n{extra_settings}")).unwrap();
         for d in ["run", "data", "empty"] {
             std::fs::create_dir_all(dir.path().join(d)).unwrap();
         }
-        let daemon_path = bin.join("nixe-passwordsd");
+        let daemon_path = bin.join("nyx-passwordsd");
         let mut command = if keyring {
             // `--login` makes and unlocks a "login" keyring from the password on stdin, so
             // nothing ever asks to create one; then the daemon runs on that bus.
@@ -92,15 +92,15 @@ impl Scratch {
     }
 
     fn socket(&self) -> PathBuf {
-        self.dir.path().join("run/nixe-passwords/bus")
+        self.dir.path().join("run/nyx-passwords/bus")
     }
 
     /// Runs `calls` (JSON: [[method, args...], ...]) as `role`; returns each result.
     fn as_peer(&self, role: &str, calls: Value) -> Vec<Value> {
         let out = Command::new(self.dir.path().join("bin").join(role))
             .args(["--exact", "client", "--ignored", "--nocapture", "--test-threads=1"])
-            .env("NIXE_PW_CLIENT_SOCKET", self.socket())
-            .env("NIXE_PW_CLIENT_CALLS", calls.to_string())
+            .env("NYX_PW_CLIENT_SOCKET", self.socket())
+            .env("NYX_PW_CLIENT_CALLS", calls.to_string())
             .output()
             .unwrap();
         let text = String::from_utf8_lossy(&out.stdout);
@@ -125,7 +125,7 @@ impl Scratch {
                 json!({"jsonrpc": "2.0", "id": i + 2, "method": "tools/call", "params": {"name": name, "arguments": args}}),
             );
         }
-        let mut child = Command::new(self.dir.path().join("bin/nixe-passwords-assistant"))
+        let mut child = Command::new(self.dir.path().join("bin/nyx-passwords-assistant"))
             .env_clear()
             .env("XDG_RUNTIME_DIR", self.dir.path().join("run"))
             .stdin(std::process::Stdio::piped())
@@ -140,7 +140,7 @@ impl Scratch {
         let out = child.wait_with_output().unwrap();
         let replies: Vec<Value> =
             String::from_utf8_lossy(&out.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-        assert_eq!(replies[0]["result"]["serverInfo"]["name"], "nixe-passwords");
+        assert_eq!(replies[0]["result"]["serverInfo"]["name"], "nyx-passwords");
         let tools: Vec<&str> =
             replies[1]["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert_eq!(tools, ["passwords.find", "passwords.copy"]);
@@ -161,8 +161,8 @@ impl Drop for Scratch {
 #[test]
 #[ignore = "run by the daemon tests as a peer"]
 fn client() {
-    let Ok(socket) = std::env::var("NIXE_PW_CLIENT_SOCKET") else { return };
-    let calls: Vec<Vec<Value>> = serde_json::from_str(&std::env::var("NIXE_PW_CLIENT_CALLS").unwrap()).unwrap();
+    let Ok(socket) = std::env::var("NYX_PW_CLIENT_SOCKET") else { return };
+    let calls: Vec<Vec<Value>> = serde_json::from_str(&std::env::var("NYX_PW_CLIENT_CALLS").unwrap()).unwrap();
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let results = rt.block_on(async move {
         let stream = match tokio::net::UnixStream::connect(&socket).await {
@@ -245,13 +245,13 @@ fn strangers_and_scopes() {
     // An executable that isn't one of the suite's is cut off before any message.
     assert_eq!(s.as_peer("stranger", json!([["Status"]]))[0], json!({"connect": "closed"}));
 
-    let app = s.as_peer("nixe-passwords", json!([["Status"], ["Search", "x", 5]]));
+    let app = s.as_peer("nyx-passwords", json!([["Status"], ["Search", "x", 5]]));
     assert_eq!(ok(&app[0])[0], "logged_out");
     assert_eq!(err(&app[1]), "Locked");
 
     // Glimpse can't sign in, unlock, list, reveal or sync.
     let g = s.as_peer(
-        "nixe-glimpse",
+        "nyx-glimpse",
         json!([
             ["Status"],
             ["SignIn", "https://x.example", "a@b.c", "pw"],
@@ -272,14 +272,14 @@ fn strangers_and_scopes() {
 #[test]
 fn glimpse_switched_off() {
     let s = Scratch::start("glimpse = false\n");
-    let g = s.as_peer("nixe-glimpse", json!([["Search", "x", 5], ["Generate"], ["Lock"]]));
+    let g = s.as_peer("nyx-glimpse", json!([["Search", "x", 5], ["Generate"], ["Lock"]]));
     for r in &g {
         assert_eq!(err(r), "Denied", "{r}");
     }
 }
 
 fn test_server() -> Option<(String, PathBuf)> {
-    Some((std::env::var("NIXE_PW_TEST_SERVER").ok()?, std::env::var("NIXE_PW_TEST_CA").ok()?.into()))
+    Some((std::env::var("NYX_PW_TEST_SERVER").ok()?, std::env::var("NYX_PW_TEST_CA").ok()?.into()))
 }
 
 /// Creates an account (test fixture; real accounts are made in the web vault).
@@ -316,9 +316,9 @@ async fn register(server: &str, ca: &Path, email: &str, password: &str) {
 }
 
 #[tokio::test]
-#[ignore = "needs NIXE_PW_TEST_SERVER"]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
 async fn signed_in_vault() {
-    let (server, ca) = test_server().expect("NIXE_PW_TEST_SERVER and NIXE_PW_TEST_CA");
+    let (server, ca) = test_server().expect("NYX_PW_TEST_SERVER and NYX_PW_TEST_CA");
     let email = format!("daemon-{}@example.com", &uuid::Uuid::new_v4().simple().to_string()[..10]);
     let password = "correct horse daemon battery";
     register(&server, &ca, &email, password).await;
@@ -327,14 +327,14 @@ async fn signed_in_vault() {
     let draft = json!({"name": "GitHub", "username": "octo", "password": "canary-daemon-Pw!9",
                        "uris": ["https://github.com/login"], "totp": "JBSWY3DPEHPK3PXP"})
     .to_string();
-    let app = s.as_peer("nixe-passwords", json!([["SignIn", server, email, password], ["CreateLogin", draft], ["Status"]]));
+    let app = s.as_peer("nyx-passwords", json!([["SignIn", server, email, password], ["CreateLogin", draft], ["Status"]]));
     assert_eq!(ok(&app[0])[0], true, "{:?}", app[0]);
     let id = ok(&app[1]).as_str().unwrap().to_string();
     assert_eq!(ok(&app[2])[0], "unlocked");
 
     // Glimpse finds it by name and host; results carry no password.
     let g = s.as_peer(
-        "nixe-glimpse",
+        "nyx-glimpse",
         json!([
             ["Search", "git", 5],
             ["Search", "github.com", 5],
@@ -354,25 +354,25 @@ async fn signed_in_vault() {
     assert_eq!(err(&g[4]), "Denied");
 
     // The app may reveal; then lock, and everything needs unlocking again.
-    let app = s.as_peer("nixe-passwords", json!([["Reveal", id, "password"], ["Lock"], ["Search", "git", 5], ["Status"]]));
+    let app = s.as_peer("nyx-passwords", json!([["Reveal", id, "password"], ["Lock"], ["Search", "git", 5], ["Status"]]));
     assert_eq!(ok(&app[0]), "canary-daemon-Pw!9");
     assert_eq!(err(&app[2]), "Locked");
     assert_eq!(ok(&app[3])[0], "locked");
 
     // Offline unlock from the local copy; a wrong password is refused.
-    let app = s.as_peer("nixe-passwords", json!([["Unlock", "wrong"], ["Unlock", password], ["Search", "github", 5]]));
+    let app = s.as_peer("nyx-passwords", json!([["Unlock", "wrong"], ["Unlock", password], ["Search", "github", 5]]));
     assert_eq!(err(&app[0]), "Failed");
     assert_eq!(ok(&app[2]).as_array().unwrap().len(), 1);
 
     // An item that asks for the master password again: Glimpse never gets its secrets,
     // the app only after confirming the password.
     let guarded = json!({"name": "Bank", "username": "me", "password": "canary-guarded-Pw!9", "reprompt": true}).to_string();
-    let app = s.as_peer("nixe-passwords", json!([["CreateLogin", guarded]]));
+    let app = s.as_peer("nyx-passwords", json!([["CreateLogin", guarded]]));
     let bank = ok(&app[0]).as_str().unwrap().to_string();
-    let g = s.as_peer("nixe-glimpse", json!([["Copy", bank, "password"], ["Copy", bank, "totp"]]));
+    let g = s.as_peer("nyx-glimpse", json!([["Copy", bank, "password"], ["Copy", bank, "totp"]]));
     assert_eq!((err(&g[0]), err(&g[1])), ("Reprompt", "Reprompt"));
     let app = s.as_peer(
-        "nixe-passwords",
+        "nyx-passwords",
         json!([
             ["Reveal", bank, "password"],
             ["Reveal", bank, "username"],
@@ -394,20 +394,20 @@ async fn signed_in_vault() {
     let (original, saved) = (files.path().join("codes.txt"), files.path().join("saved.txt"));
     std::fs::write(&original, "canary-daemon attachment\n").unwrap();
     let path = |p: &Path| p.display().to_string();
-    let app = s.as_peer("nixe-passwords", json!([["AddAttachment", id, "codes.txt", path(&original)], ["Attachments", id]]));
+    let app = s.as_peer("nyx-passwords", json!([["AddAttachment", id, "codes.txt", path(&original)], ["Attachments", id]]));
     ok(&app[0]);
     let listed: Value = serde_json::from_str(ok(&app[1]).as_str().unwrap()).unwrap();
     assert_eq!(listed[0]["name"], "codes.txt");
     let attachment = listed[0]["id"].as_str().unwrap().to_string();
-    let app = s.as_peer("nixe-passwords", json!([["SaveAttachment", id, attachment, path(&saved)]]));
+    let app = s.as_peer("nyx-passwords", json!([["SaveAttachment", id, attachment, path(&saved)]]));
     assert_eq!(ok(&app[0]), 25);
     assert_eq!(std::fs::read(&saved).unwrap(), std::fs::read(&original).unwrap());
     let g = s.as_peer(
-        "nixe-glimpse",
+        "nyx-glimpse",
         json!([["Attachments", id], ["SaveAttachment", id, attachment, path(&files.path().join("g.txt"))]]),
     );
     assert_eq!((err(&g[0]), err(&g[1])), ("Denied", "Denied"));
-    let app = s.as_peer("nixe-passwords", json!([["DeleteAttachment", id, attachment], ["Attachments", id]]));
+    let app = s.as_peer("nyx-passwords", json!([["DeleteAttachment", id, attachment], ["Attachments", id]]));
     ok(&app[0]);
     assert_eq!(ok(&app[1]), "[]");
 
@@ -417,7 +417,7 @@ async fn signed_in_vault() {
     assert_eq!(found[0]["isError"], true);
     assert!(found[0]["content"][0]["text"].as_str().unwrap().contains("turn on"));
     std::thread::sleep(Duration::from_millis(20));
-    let settings = s.dir.path().join("config/nixe-passwords/settings.toml");
+    let settings = s.dir.path().join("config/nyx-passwords/settings.toml");
     let text = std::fs::read_to_string(&settings).unwrap();
     std::fs::write(&settings, format!("{text}assistant = true\n")).unwrap();
     let got = s.assistant(&[
@@ -466,8 +466,8 @@ impl Scratch {
     fn as_browser(&self, step: &str) -> Vec<Value> {
         let out = Command::new(self.dir.path().join("bin/firefox"))
             .args(["--exact", "browser", "--ignored", "--nocapture", "--test-threads=1"])
-            .env("NIXE_PW_BROWSER_STEP", step)
-            .env("NIXE_PW_BROWSER_STATE", self.dir.path().join("extension.json"))
+            .env("NYX_PW_BROWSER_STEP", step)
+            .env("NYX_PW_BROWSER_STATE", self.dir.path().join("extension.json"))
             // The scratch session's daemon, never the real one.
             .env("XDG_RUNTIME_DIR", self.dir.path().join("run"))
             .env("XDG_CONFIG_HOME", self.dir.path().join("config"))
@@ -498,11 +498,11 @@ fn unb64(text: &str) -> Vec<u8> {
 fn browser() {
     use aes_gcm::aead::{Aead, KeyInit, Payload};
     use std::io::{Read, Write};
-    let Ok(step) = std::env::var("NIXE_PW_BROWSER_STEP") else { return };
-    let state_file = std::env::var("NIXE_PW_BROWSER_STATE").unwrap();
-    let bridge = std::env::current_exe().unwrap().with_file_name("nixe-passwords-bridge");
+    let Ok(step) = std::env::var("NYX_PW_BROWSER_STEP") else { return };
+    let state_file = std::env::var("NYX_PW_BROWSER_STATE").unwrap();
+    let bridge = std::env::current_exe().unwrap().with_file_name("nyx-passwords-bridge");
     let mut child = Command::new(bridge)
-        .args(["/tmp/manifest.json", "passwords@nixe"])
+        .args(["/tmp/manifest.json", "passwords@nyx"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -531,9 +531,9 @@ fn browser() {
             let salt = [public.as_bytes().as_slice(), &theirs].concat();
             let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(&salt), shared.as_bytes());
             let mut key = [0u8; 32];
-            hk.expand(b"nixe-passwords pair v1", &mut key).unwrap();
+            hk.expand(b"nyx-passwords pair v1", &mut key).unwrap();
             let mut code = [0u8; 4];
-            hk.expand(b"nixe-passwords code v1", &mut code).unwrap();
+            hk.expand(b"nyx-passwords code v1", &mut code).unwrap();
             let code = format!("{:06}", u32::from_be_bytes(code) % 1_000_000);
             std::fs::write(&state_file, json!({"id": reply["p"], "key": b64(&key)}).to_string()).unwrap();
             results.push(json!({"id": reply["p"], "code": code}));
@@ -585,8 +585,8 @@ fn bridge_needs_a_browser() {
     use std::io::{Read, Write};
     let s = Scratch::start("");
     // Started by this test, not a browser: the daemon won't serve it.
-    let mut child = Command::new(s.dir.path().join("bin/nixe-passwords-bridge"))
-        .arg("passwords@nixe")
+    let mut child = Command::new(s.dir.path().join("bin/nyx-passwords-bridge"))
+        .arg("passwords@nyx")
         .env("XDG_RUNTIME_DIR", s.dir.path().join("run"))
         .env("XDG_CONFIG_HOME", s.dir.path().join("config"))
         .stdin(std::process::Stdio::piped())
@@ -609,9 +609,9 @@ fn bridge_needs_a_browser() {
 }
 
 #[tokio::test]
-#[ignore = "needs NIXE_PW_TEST_SERVER"]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
 async fn paired_browser() {
-    let (server, ca) = test_server().expect("NIXE_PW_TEST_SERVER and NIXE_PW_TEST_CA");
+    let (server, ca) = test_server().expect("NYX_PW_TEST_SERVER and NYX_PW_TEST_CA");
     let email = format!("browser-{}@example.com", &uuid::Uuid::new_v4().simple().to_string()[..10]);
     let password = "correct horse browser battery";
     register(&server, &ca, &email, password).await;
@@ -619,8 +619,8 @@ async fn paired_browser() {
     let github = json!({"name": "GitHub", "username": "octo", "password": "canary-gh-Pw!9", "uris": ["https://github.com/login"], "totp": "JBSWY3DPEHPK3PXP"}).to_string();
     let other =
         json!({"name": "Other", "username": "x", "password": "canary-other-Pw!9", "uris": ["https://example.org"]}).to_string();
-    let app = s
-        .as_peer("nixe-passwords", json!([["SignIn", server, email, password], ["CreateLogin", github], ["CreateLogin", other]]));
+    let app =
+        s.as_peer("nyx-passwords", json!([["SignIn", server, email, password], ["CreateLogin", github], ["CreateLogin", other]]));
     assert_eq!(ok(&app[0])[0], true);
     let (gh, other_id) = (ok(&app[1]).as_str().unwrap().to_string(), ok(&app[2]).as_str().unwrap().to_string());
 
@@ -629,11 +629,11 @@ async fn paired_browser() {
     let (id, code) = (hello[0]["id"].as_str().unwrap().to_string(), hello[0]["code"].as_str().unwrap().to_string());
     let before = s.as_browser(r#"[{"r":"status"}]"#);
     assert_eq!(before[0]["t"], "pending");
-    let app = s.as_peer("nixe-passwords", json!([["Pairings"]]));
+    let app = s.as_peer("nyx-passwords", json!([["Pairings"]]));
     let listing: Value = serde_json::from_str(ok(&app[0]).as_str().unwrap()).unwrap();
     assert_eq!(listing["pending"][0]["code"], code.as_str());
     assert_eq!(listing["pending"][0]["browser"], "Firefox");
-    let app = s.as_peer("nixe-passwords", json!([["ConfirmPairing", id]]));
+    let app = s.as_peer("nyx-passwords", json!([["ConfirmPairing", id]]));
     assert!(app[0].get("ok").is_some(), "{:?}", app[0]);
 
     let page = "https://github.com/login";
@@ -692,13 +692,13 @@ async fn paired_browser() {
     }
 
     // Locked: the extension learns only that.
-    let app = s.as_peer("nixe-passwords", json!([["Lock"]]));
+    let app = s.as_peer("nyx-passwords", json!([["Lock"]]));
     assert!(app[0].get("ok").is_some());
     let r = s.as_browser(r#"[{"r":"status"}]"#);
     assert_eq!(r[0]["t"], "locked");
 
     // After unlocking, the stored pairing works again; removing it ends it.
-    let app = s.as_peer("nixe-passwords", json!([["Unlock", password], ["RemovePairing", id]]));
+    let app = s.as_peer("nyx-passwords", json!([["Unlock", password], ["RemovePairing", id]]));
     assert!(app[0].get("ok").is_some() && app[1].get("ok").is_some());
     let r = s.as_browser(r#"[{"r":"status"}]"#);
     assert_eq!(r[0]["t"], "unknown");
@@ -707,9 +707,9 @@ async fn paired_browser() {
 /// Unlocking with the keyring, against a keyring of the test's own: off at first; turned
 /// on, the vault opens after a lock without the master password; turned off, it doesn't.
 #[tokio::test]
-#[ignore = "needs NIXE_PW_TEST_SERVER"]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
 async fn keyring_unlock() {
-    let (server, ca) = test_server().expect("NIXE_PW_TEST_SERVER and NIXE_PW_TEST_CA");
+    let (server, ca) = test_server().expect("NYX_PW_TEST_SERVER and NYX_PW_TEST_CA");
     if ["dbus-run-session", "gnome-keyring-daemon", "secret-tool"].iter().any(|t| !Path::new("/usr/bin").join(t).exists()) {
         eprintln!("skipped: needs dbus-run-session, gnome-keyring-daemon and secret-tool");
         return;
@@ -720,7 +720,7 @@ async fn keyring_unlock() {
     let s = Scratch::start_with_keyring(&format!("extra_ca = {:?}\n", ca.display().to_string()));
     let draft = json!({"name": "GitHub", "username": "octo", "password": "canary-keyring-Pw!9"}).to_string();
     let app = s.as_peer(
-        "nixe-passwords",
+        "nyx-passwords",
         json!([
             ["SignIn", server, email, password],
             ["CreateLogin", draft],
@@ -748,11 +748,11 @@ async fn keyring_unlock() {
     assert_eq!(ok(&app[10]).as_array().unwrap().len(), 1);
     assert_eq!(ok(&app[11])[0], "unlocked");
     // Glimpse can't unlock or turn it on.
-    let g = s.as_peer("nixe-glimpse", json!([["UnlockWithKeyring"], ["SetKeyringUnlock", true]]));
+    let g = s.as_peer("nyx-glimpse", json!([["UnlockWithKeyring"], ["SetKeyringUnlock", true]]));
     assert_eq!((err(&g[0]), err(&g[1])), ("Denied", "Denied"));
 
     let app = s.as_peer(
-        "nixe-passwords",
+        "nyx-passwords",
         json!([["SetKeyringUnlock", false], ["Lock"], ["KeyringUnlock"], ["UnlockWithKeyring"], ["Status"]]),
     );
     ok(&app[0]);

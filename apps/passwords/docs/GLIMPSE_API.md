@@ -1,16 +1,16 @@
-# Nixe Passwords — daemon interface and Glimpse integration
+# Nyx Passwords — daemon interface and Glimpse integration
 
 ## Connection
 
 | | |
 | --- | --- |
-| Address | `unix:path=$XDG_RUNTIME_DIR/nixe-passwords/bus` (directory 0700, socket 0600) |
+| Address | `unix:path=$XDG_RUNTIME_DIR/nyx-passwords/bus` (directory 0700, socket 0600) |
 | Transport | Peer-to-peer D-Bus (no message bus); the daemon is the server |
-| Interface | `io.github.design_nexus.nixe.Passwords1` |
-| Object | `/io/github/design_nexus/nixe/Passwords` |
-| Start | If the socket is missing: `systemctl --user start nixe-passwords.service`, then retry for up to 2 s |
+| Interface | `io.github.design_nexus.nyx.Passwords1` |
+| Object | `/io/github/design_nexus/nyx/Passwords` |
+| Start | If the socket is missing: `systemctl --user start nyx-passwords.service`, then retry for up to 2 s |
 
-`nixe-passwords-proto` (MIT) holds these names, the types below and the error names,
+`nyx-passwords-proto` (MIT) holds these names, the types below and the error names,
 so Glimpse needs nothing GPL.
 
 ### Peers and scopes
@@ -21,11 +21,11 @@ is disconnected before any method runs.
 
 | Executable | Scope |
 | --- | --- |
-| `~/.local/bin/nixe-passwords` | `app`: everything below plus `Reveal`, edits, login, unlock, settings |
-| `~/.local/bin/nixe-glimpse` | `glimpse`: `Status`, `Search`, `Suggest`, `Copy`, `OpenUrl`, `Generate`, `Lock` |
-| `~/.local/bin/nixe-passwords-settings` | `settings`: `Status`, `Lock`, `Sync` |
-| `~/.local/bin/nixe-passwords-bridge` | `browser`: per-origin calls in [NATIVE_MESSAGING.md](NATIVE_MESSAGING.md) |
-| `~/.local/bin/nixe-passwords-assistant` | `assistant`: `Status`, `Search`, `Copy` (username, password, code). Off until `assistant = true` |
+| `~/.local/bin/nyx-passwords` | `app`: everything below plus `Reveal`, edits, login, unlock, settings |
+| `~/.local/bin/nyx-glimpse` | `glimpse`: `Status`, `Search`, `Suggest`, `Copy`, `OpenUrl`, `Generate`, `Lock` |
+| `~/.local/bin/nyx-passwords-settings` | `settings`: `Status`, `Lock`, `Sync` |
+| `~/.local/bin/nyx-passwords-bridge` | `browser`: per-origin calls in [NATIVE_MESSAGING.md](NATIVE_MESSAGING.md) |
+| `~/.local/bin/nyx-passwords-assistant` | `assistant`: `Status`, `Search`, `Copy` (username, password, code). Off until `assistant = true` |
 
 Each integration can be turned off in settings (`glimpse = false` and so on). Its peer
 is then refused with `Denied`. In debug builds an extra allowlist entry for
@@ -49,7 +49,7 @@ All strings are UTF-8. An `Item` is `(s id, s name, s username, s host, b has_to
 | `Generate` | `() → (u clear_seconds)` | Generates with the saved generator settings and copies the result |
 | `Lock` | `() → ()` | |
 
-**Errors** (D-Bus error names, prefix `io.github.design_nexus.nixe.Passwords1.Error.`):
+**Errors** (D-Bus error names, prefix `io.github.design_nexus.nyx.Passwords1.Error.`):
 
 | Name | Meaning |
 | --- | --- |
@@ -88,7 +88,7 @@ Item ids are not secret, but the list reveals usage, so it isn't written to disk
 | `SignOut` | `() → ()` | Removes the account, the local copy and the saved token |
 | `Sync` | `() → ()` | Also allowed for the Settings page |
 | `List` | `() → s` | JSON: account, entries (metadata, with `editable`, `view_password`, `deletable`, `restorable`), folders, collections (with `writable`), organizations |
-| `Reveal` | `(s id, s field) → s` | `username`, `password`, `totp` (the code), `totp_seed`, `notes`, `custom:N`, or a card, identity or SSH key field (`card.number`, …; the list is `nixe_passwords_proto::fields`) |
+| `Reveal` | `(s id, s field) → s` | `username`, `password`, `totp` (the code), `totp_seed`, `notes`, `custom:N`, or a card, identity or SSH key field (`card.number`, …; the list is `nyx_passwords_proto::fields`) |
 | `Fields` | `(s id) → s` | JSON `[{name, label, value, secret}]`: a card's, identity's or SSH key's fields and the custom fields; secret values are left out |
 | `GeneratePassword` | `(s rules) → s` | `{"kind":"password",…}` or `{"kind":"passphrase",…}` |
 | `CreateLogin` | `(s draft) → s id` | Draft JSON: name, username, password, totp, uris, notes, folder, favorite, reprompt, organization, collections (an organization item needs at least one collection it can write to) |
@@ -152,9 +152,9 @@ below always work:
 
 | `Status` | Glimpse shows |
 | --- | --- |
-| socket can't be reached | one row "Nixe Passwords isn't running": Enter starts the service |
-| `logged_out` | "Sign in to Vaultwarden": Enter runs `nixe-passwords` |
-| `locked` | "Vault locked": Enter runs `nixe-passwords --unlock`, which opens the unlock page and, when unlocked, leaves the query to be run again |
+| socket can't be reached | one row "Nyx Passwords isn't running": Enter starts the service |
+| `logged_out` | "Sign in to Vaultwarden": Enter runs `nyx-passwords` |
+| `locked` | "Vault locked": Enter runs `nyx-passwords --unlock`, which opens the unlock page and, when unlocked, leaves the query to be run again |
 | `unlocked` | results |
 
 ### Confirmation

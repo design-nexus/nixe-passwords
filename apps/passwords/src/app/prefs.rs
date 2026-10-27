@@ -1,10 +1,10 @@
 //! The window's preferences and the vault settings the daemon reads, in one file
-//! (`~/.config/nixe-passwords/settings.toml`).
+//! (`~/.config/nyx-passwords/settings.toml`).
 
-pub use nixe_theme::ThemeMode;
+pub use nyx_theme::ThemeMode;
 use serde::{Deserialize, Serialize};
 
-pub use nixe_passwords::daemon::settings::Settings as Vault;
+pub use nyx_passwords::daemon::settings::Settings as Vault;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -38,4 +38,4 @@ impl Default for Prefs {
     }
 }
 
-nixe_core::prefs_store!(Prefs);
+nyx_core::prefs_store!(Prefs);

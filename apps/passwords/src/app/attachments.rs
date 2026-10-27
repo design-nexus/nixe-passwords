@@ -5,7 +5,7 @@
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use gtk::{gio, glib, prelude::*};
-use nixe_ui::widgets as w;
+use nyx_ui::widgets as w;
 
 use super::client;
 use super::data::Entry;

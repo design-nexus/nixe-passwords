@@ -6,18 +6,18 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use nixe_passwords_core::api::{ApiError, MAX_ATTACHMENT, Server, TwoFactor, TwoFactorAnswer};
-use nixe_passwords_core::audit::{self, StrengthCache};
-use nixe_passwords_core::crypto::CryptoError;
-use nixe_passwords_core::edit::{ItemDraft, LoginDraft, Place};
-use nixe_passwords_core::generate;
-use nixe_passwords_core::keyring;
-use nixe_passwords_core::model::Kind;
-use nixe_passwords_core::secret::{Secret, SecretBytes};
-use nixe_passwords_core::session::{self, Session, SessionError, SignIn};
-use nixe_passwords_core::store::Store;
-use nixe_passwords_core::vault::{Entry, Field, RevealError, reveal, specs};
-use nixe_passwords_proto::{Error as Code, Item, field, state};
+use nyx_passwords_core::api::{ApiError, MAX_ATTACHMENT, Server, TwoFactor, TwoFactorAnswer};
+use nyx_passwords_core::audit::{self, StrengthCache};
+use nyx_passwords_core::crypto::CryptoError;
+use nyx_passwords_core::edit::{ItemDraft, LoginDraft, Place};
+use nyx_passwords_core::generate;
+use nyx_passwords_core::keyring;
+use nyx_passwords_core::model::Kind;
+use nyx_passwords_core::secret::{Secret, SecretBytes};
+use nyx_passwords_core::session::{self, Session, SessionError, SignIn};
+use nyx_passwords_core::store::Store;
+use nyx_passwords_core::vault::{Entry, Field, RevealError, reveal, specs};
+use nyx_passwords_proto::{Error as Code, Item, field, state};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -583,7 +583,7 @@ impl Vault {
         let id = parse_id(id)?;
         let st = self.state.lock().await;
         let session = st.session.as_ref().ok_or_else(locked)?;
-        let shown = nixe_passwords_core::vault::fields(&session.keys, &session.snapshot, id)?;
+        let shown = nyx_passwords_core::vault::fields(&session.keys, &session.snapshot, id)?;
         let list: Vec<_> = shown
             .iter()
             .map(|f| json!({"name": f.name, "label": f.label, "value": f.value.as_ref().map(|v| v.expose()), "secret": f.secret}))
@@ -594,7 +594,7 @@ impl Vault {
     /// A new Ed25519 key for the editor: `{private, public, fingerprint}`.
     pub fn generate_ssh_key(&self, scope: Scope) -> Result<String> {
         need(scope, Scope::App)?;
-        let key = nixe_passwords_core::ssh::generate();
+        let key = nyx_passwords_core::ssh::generate();
         Ok(json!({"private": key.private.expose(), "public": key.public, "fingerprint": key.fingerprint}).to_string())
     }
 
@@ -605,7 +605,7 @@ impl Vault {
         if private.len() > SSH_KEY_MAX {
             return Err(Failure::new(Code::Failed, "that file is too large to be a private key"));
         }
-        let key = nixe_passwords_core::ssh::read(private).map_err(|e| Failure::new(Code::Failed, e.to_string()))?;
+        let key = nyx_passwords_core::ssh::read(private).map_err(|e| Failure::new(Code::Failed, e.to_string()))?;
         Ok(json!({"public": key.public, "fingerprint": key.fingerprint}).to_string())
     }
 
@@ -807,7 +807,7 @@ fn any_field(name: &str) -> Result<Field> {
         "notes" => Field::Notes,
         other => match other.strip_prefix("custom:").and_then(|n| n.parse().ok()) {
             Some(n) => Field::Custom(n),
-            None => nixe_passwords_core::vault::sub_field(other).ok_or_else(|| Failure::new(Code::NoField, "unknown field"))?,
+            None => nyx_passwords_core::vault::sub_field(other).ok_or_else(|| Failure::new(Code::NoField, "unknown field"))?,
         },
     };
     Ok(field)
@@ -846,7 +846,7 @@ fn unlock_entry(st: &State) -> Option<keyring::Entry> {
 fn allow_finder(scope: Scope, st: &mut State) -> Result<()> {
     match scope {
         Scope::Assistant if st.settings.refresh().assistant => Ok(()),
-        Scope::Assistant => Err(Failure::new(Code::Denied, "turn on Nixe Assistant in Passwords' settings first")),
+        Scope::Assistant => Err(Failure::new(Code::Denied, "turn on Nyx Assistant in Passwords' settings first")),
         _ => allow_glimpse(scope, st),
     }
 }
@@ -1084,7 +1084,7 @@ fn url_host(url: &str) -> Option<String> {
 
 fn device_name() -> String {
     let host = std::fs::read_to_string("/etc/hostname").map(|h| h.trim().to_string()).unwrap_or_default();
-    if host.is_empty() { "Nixe Passwords".into() } else { format!("Nixe Passwords on {host}") }
+    if host.is_empty() { "Nyx Passwords".into() } else { format!("Nyx Passwords on {host}") }
 }
 
 #[cfg(test)]

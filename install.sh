@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Install Nixe apps.
+# Install Nyx apps.
 #
-#   curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- music pdf
-#   curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe/main/install.sh | bash -s -- all
+#   curl -fsSL https://raw.githubusercontent.com/design-nexus/nyx/main/install.sh | bash -s -- music pdf
+#   curl -fsSL https://raw.githubusercontent.com/design-nexus/nyx/main/install.sh | bash -s -- all
 #
 # Apps: settings contacts tasks torrents pdf notepad music media-player theater chat fonts archive office photos glimpse store git passwords weather news capture pulse
 # Options:
@@ -11,7 +11,7 @@
 #   --list     list the apps and exit
 set -euo pipefail
 
-REPO="design-nexus/nixe-passwords"
+REPO="design-nexus/nyx-passwords"
 asroot() { if [[ -t 0 ]]; then sudo "$@"; else pkexec "$@"; fi; }
 ALL=(passwords)
 (($#)) || set -- passwords
@@ -22,16 +22,16 @@ die() { printf '\033[31m==>\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ---------- What each app is ----------
 # dir: folder under apps/   pkg: cargo package   bins: programs it installs
-# deps: Arch packages it needs   old_*: what the app was called before Nixe
+# deps: Arch packages it needs   old_*: what the app was called before Nyx
 app_info() {
-  dir=$1 pkg="nixe-$1" bins="nixe-$1" deps="" ids="" old_bins="" old_desktops="" old_icons="" defaults=false
+  dir=$1 pkg="nyx-$1" bins="nyx-$1" deps="" ids="" old_bins="" old_desktops="" old_icons="" defaults=false
   case $1 in
-    settings) ids="Settings" old_bins="settings settings-helper"; bins="nixe-settings nixe-settings-helper nixe-goa-helper" ;;
-    glimpse) ids="Glimpse" bins="nixe-glimpse nixe-glimpsed nixe-glimpse-settings" deps="bubblewrap" ;;
+    settings) ids="Settings" old_bins="settings settings-helper"; bins="nyx-settings nyx-settings-helper nyx-goa-helper" ;;
+    glimpse) ids="Glimpse" bins="nyx-glimpse nyx-glimpsed nyx-glimpse-settings" deps="bubblewrap" ;;
     contacts) ids="Contacts" defaults=true ;;
     git) ids="Git" deps="gtksourceview5 libsecret git-lfs" ;;
-    passwords) ids="Passwords" bins="nixe-passwords nixe-passwordsd nixe-passwords-settings nixe-passwords-bridge nixe-passwords-assistant" deps="libsecret librsvg zip" ;;
-    store) ids="Store" bins="nixe-store nixe-store-helper" deps="pacman appstream libarchive polkit base-devel libjxl" ;;
+    passwords) ids="Passwords" bins="nyx-passwords nyx-passwordsd nyx-passwords-settings nyx-passwords-bridge nyx-passwords-assistant" deps="libsecret librsvg zip" ;;
+    store) ids="Store" bins="nyx-store nyx-store-helper" deps="pacman appstream libarchive polkit base-devel libjxl" ;;
     tasks) ids="Tasks" old_bins="tasks" ;;
     torrents) ids="Torrents" old_bins="torrents" deps="libtorrent-rasterbar boost" defaults=true ;;
     pdf) ids="Pdf" old_bins="pdf" deps="poppler-glib" defaults=true ;;
@@ -43,17 +43,17 @@ app_info() {
     fonts) ids="Fonts" old_bins="fonts" deps="fontconfig pango tar xz" ;;
     archive) ids="Archive" old_bins="archive" deps="7zip" defaults=true ;;
     weather) ids="Weather" ;;
-    news) ids="News" deps="libsecret" bins="nixe-news nixe-news-glimpse" ;;
-    capture) ids="Capture" deps="grim wl-clipboard tesseract gtk4-layer-shell tesseract-data-eng" bins="nixe-capture nixe-capture-glimpse" ;;
-    pulse) ids="Pulse" bins="nixe-pulse nixe-pulse-glimpse" deps="mpv ffmpeg tlottie libsecret clang unzip gstreamer gst-plugins-base gst-plugins-good gst-plugin-pipewire libcanberra geoclue webkit2gtk-4.1 python-gobject libfido2" ;;
+    news) ids="News" deps="libsecret" bins="nyx-news nyx-news-glimpse" ;;
+    capture) ids="Capture" deps="grim wl-clipboard tesseract gtk4-layer-shell tesseract-data-eng" bins="nyx-capture nyx-capture-glimpse" ;;
+    pulse) ids="Pulse" bins="nyx-pulse nyx-pulse-glimpse" deps="mpv ffmpeg tlottie libsecret clang unzip gstreamer gst-plugins-base gst-plugins-good gst-plugin-pipewire libcanberra geoclue webkit2gtk-4.1 python-gobject libfido2" ;;
     office)
-      bins="nixe-office nixe-write nixe-sheets nixe-present" ids="Write Sheets Present" defaults=true
+      bins="nyx-office nyx-write nyx-sheets nyx-present" ids="Write Sheets Present" defaults=true
       deps="gtksourceview5 libspelling hunspell hunspell-en_us"
       old_bins="nexus-office nexus-write nexus-sheets nexus-present"
       old_desktops="nexus-write.desktop nexus-sheets.desktop nexus-present.desktop" ;;
-    assistant) dir=assistant pkg="" bins="nixe-assistant nixe-assistantd" ids="" deps="nodejs npm jq ripgrep" ;;
+    assistant) dir=assistant pkg="" bins="nyx-assistant nyx-assistantd" ids="" deps="nodejs npm jq ripgrep" ;;
     photos)
-      dir=gallery bins="nixe-photos nixe-viewer" ids="Photos PhotoViewer" defaults=true
+      dir=gallery bins="nyx-photos nyx-viewer" ids="Photos PhotoViewer" defaults=true
       old_bins="nexus-photos npv nexus-photos-viewer" old_desktops="nexus-photos.desktop npv.desktop"
       old_icons="io.github.nexus.photos.svg" ;;
     *) return 1 ;;
@@ -87,15 +87,15 @@ for selected in "${apps[@]}"; do
   [[ $selected == passwords ]] || die "This repository installs only passwords."
 done
 
-command -v hyprctl >/dev/null || warn "Hyprland wasn't found. Nixe apps are made for Omarchy (Hyprland), but run elsewhere too."
+command -v hyprctl >/dev/null || warn "Hyprland wasn't found. Nyx apps are made for Omarchy (Hyprland), but run elsewhere too."
 
 # Keep a pacman-managed Git installation managed by pacman on subsequent updates.
-if [[ " ${apps[*]} " == *" git "* ]] && command -v pacman >/dev/null && pacman -Qq nixe-git >/dev/null 2>&1; then
+if [[ " ${apps[*]} " == *" git "* ]] && command -v pacman >/dev/null && pacman -Qq nyx-git >/dev/null 2>&1; then
   package_helper=""
   if [[ -n ${BASH_SOURCE[0]:-} && -f ${BASH_SOURCE[0]} ]]; then
     package_helper="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/apps/git/packaging/build.sh"
   fi
-  [[ -x $package_helper ]] || die "Git is managed by pacman. Update from a Nixe checkout with apps/git/packaging/build.sh --install."
+  [[ -x $package_helper ]] || die "Git is managed by pacman. Update from a Nyx checkout with apps/git/packaging/build.sh --install."
   "$package_helper" --install
   remaining=()
   for a in "${apps[@]}"; do [[ $a == git ]] || remaining+=("$a"); done
@@ -150,7 +150,7 @@ if [[ -n $here && -f $here/.prebuilt ]]; then
   prebuilt=true
 elif [[ -n $here && -f $here/Cargo.toml && -d $here/crates ]]; then
   src=$here
-elif [[ ${NIXE_BUILD:-} != 1 ]] && tags=$(for a in "${apps[@]}"; do t=$(release_tag "$a"); [[ -n $t ]] || exit 1; echo "$t"; done); then
+elif [[ ${NYX_BUILD:-} != 1 ]] && tags=$(for a in "${apps[@]}"; do t=$(release_tag "$a"); [[ -n $t ]] || exit 1; echo "$t"; done); then
   # Every app asked for has a release: unpack them over one another, no build.
   say "Fetching ${apps[*]}"
   src="$work/src"
@@ -177,16 +177,16 @@ fi
 # ---------- Build ----------
 if [[ $prebuilt == false ]]; then
   if ! command -v cargo >/dev/null; then
-    command -v pacman >/dev/null || die "Rust (cargo) is needed to build Nixe apps. Install it and run this again."
+    command -v pacman >/dev/null || die "Rust (cargo) is needed to build Nyx apps. Install it and run this again."
     say "Installing rust"
     sudo pacman -S --needed --noconfirm rust
   fi
   pkgs=()
   for a in "${apps[@]}"; do app_info "$a"; pkgs+=(-p "$pkg"); done
-  if [[ " ${apps[*]} " == *" settings "* ]]; then pkgs+=(-p nixe-goa-helper); fi
-  if [[ " ${apps[*]} " == *" news "* ]]; then pkgs+=(-p nixe-news-glimpse); fi
-  if [[ " ${apps[*]} " == *" capture "* ]]; then pkgs+=(-p nixe-capture-glimpse); fi
-  if [[ " ${apps[*]} " == *" pulse "* ]]; then pkgs+=(-p nixe-pulse-glimpse); fi
+  if [[ " ${apps[*]} " == *" settings "* ]]; then pkgs+=(-p nyx-goa-helper); fi
+  if [[ " ${apps[*]} " == *" news "* ]]; then pkgs+=(-p nyx-news-glimpse); fi
+  if [[ " ${apps[*]} " == *" capture "* ]]; then pkgs+=(-p nyx-capture-glimpse); fi
+  if [[ " ${apps[*]} " == *" pulse "* ]]; then pkgs+=(-p nyx-pulse-glimpse); fi
   if [[ " ${apps[*]} " == *" pulse "* ]]; then "$src/apps/pulse/packaging/prepare-native.sh"; fi
   say "Building ${apps[*]} (a few minutes the first time)"
   (cd "$src" && cargo build --release "${locked[@]}" "${pkgs[@]}")
@@ -220,59 +220,59 @@ for a in "${apps[@]}"; do
       install -m 755 "$d/packaging/$b" "$bin/$b"
     fi
   done
-  for f in "$d"/data/io.github.design_nexus.nixe.*.desktop; do install -m 644 "$f" "$desk/"; done
-  for id in $ids; do install -m 644 "$src/crates/nixe-icons/apps/io.github.design_nexus.nixe.$id.svg" "$icons/"; done
-  if [[ $a == news && -f ${CARGO_TARGET_DIR:-$src/target}/release/nixe-news-glimpse ]]; then
-    plug="$share/nixe-news/glimpse"
+  for f in "$d"/data/io.github.design_nexus.nyx.*.desktop; do install -m 644 "$f" "$desk/"; done
+  for id in $ids; do install -m 644 "$src/crates/nyx-icons/apps/io.github.design_nexus.nyx.$id.svg" "$icons/"; done
+  if [[ $a == news && -f ${CARGO_TARGET_DIR:-$src/target}/release/nyx-news-glimpse ]]; then
+    plug="$share/nyx-news/glimpse"
     mkdir -p "$plug"
-    install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nixe-news-glimpse" "$plug/nixe-news-glimpse"
+    install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nyx-news-glimpse" "$plug/nyx-news-glimpse"
     install -m 644 "$src/apps/news-glimpse/plugin.toml" "$plug/plugin.toml"
   fi
-  if [[ $a == capture && -f ${CARGO_TARGET_DIR:-$src/target}/release/nixe-capture-glimpse ]]; then
-    plug="$share/nixe-capture/glimpse"
+  if [[ $a == capture && -f ${CARGO_TARGET_DIR:-$src/target}/release/nyx-capture-glimpse ]]; then
+    plug="$share/nyx-capture/glimpse"
     mkdir -p "$plug"
-    install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nixe-capture-glimpse" "$plug/nixe-capture-glimpse"
+    install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nyx-capture-glimpse" "$plug/nyx-capture-glimpse"
     install -m 644 "$src/apps/capture-glimpse/plugin.toml" "$plug/plugin.toml"
   fi
   if [[ $a == pulse ]]; then
-    mkdir -p "$share/nixe/lib"
-    install -m 755 "$src/target/native/ntgcalls/lib/libntgcalls.so" "$share/nixe/lib/libntgcalls.so"
-    install -m 644 "$src/target/native/ntgcalls/THIRD_PARTY_NOTICES.md" "$share/nixe/lib/NTGCALLS-NOTICES.md"
-    install -m 644 "$src/crates/nixe-telegram-calls/native/NTGCALLS-LICENSE" "$share/nixe/lib/NTGCALLS-LICENSE"
-    if [[ ! -f "$share/nixe/lib/libtdjson.so" && -f "$HOME/.local/share/nixe/lib/libtdjson.so" ]]; then
-      install -m 755 "$HOME/.local/share/nixe/lib/libtdjson.so" "$share/nixe/lib/libtdjson.so"
+    mkdir -p "$share/nyx/lib"
+    install -m 755 "$src/target/native/ntgcalls/lib/libntgcalls.so" "$share/nyx/lib/libntgcalls.so"
+    install -m 644 "$src/target/native/ntgcalls/THIRD_PARTY_NOTICES.md" "$share/nyx/lib/NTGCALLS-NOTICES.md"
+    install -m 644 "$src/crates/nyx-telegram-calls/native/NTGCALLS-LICENSE" "$share/nyx/lib/NTGCALLS-LICENSE"
+    if [[ ! -f "$share/nyx/lib/libtdjson.so" && -f "$HOME/.local/share/nyx/lib/libtdjson.so" ]]; then
+      install -m 755 "$HOME/.local/share/nyx/lib/libtdjson.so" "$share/nyx/lib/libtdjson.so"
     fi
-    if [[ -f ${CARGO_TARGET_DIR:-$src/target}/release/nixe-pulse-glimpse ]]; then
-      plug="$share/nixe-pulse/glimpse"
+    if [[ -f ${CARGO_TARGET_DIR:-$src/target}/release/nyx-pulse-glimpse ]]; then
+      plug="$share/nyx-pulse/glimpse"
       mkdir -p "$plug"
-      install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nixe-pulse-glimpse" "$plug/nixe-pulse-glimpse"
+      install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nyx-pulse-glimpse" "$plug/nyx-pulse-glimpse"
       install -m 644 "$src/apps/pulse-glimpse/plugin.toml" "$plug/plugin.toml"
     fi
   fi
-  if [[ -f $d/data/nixe-office.xml ]]; then
+  if [[ -f $d/data/nyx-office.xml ]]; then
     mkdir -p "$share/mime/packages"
-    install -m 644 "$d/data/nixe-office.xml" "$share/mime/packages/"
+    install -m 644 "$d/data/nyx-office.xml" "$share/mime/packages/"
     rm -f "$share/mime/packages/nexus-office.xml"
     update-mime-database "$share/mime" 2>/dev/null || true
   fi
 
   if [[ $a == store ]]; then
     say "Installing Store's root-owned package helper and authorization policy"
-    asroot install -d -m 755 /usr/local/lib/nixe-store /var/lib/nixe-store
-    asroot install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nixe-store-helper" /usr/local/lib/nixe-store/nixe-store-helper
-    asroot install -m 644 "$d/data/io.github.design_nexus.nixe.store.policy" /usr/share/polkit-1/actions/io.github.design_nexus.nixe.store.policy
+    asroot install -d -m 755 /usr/local/lib/nyx-store /var/lib/nyx-store
+    asroot install -m 755 "${CARGO_TARGET_DIR:-$src/target}/release/nyx-store-helper" /usr/local/lib/nyx-store/nyx-store-helper
+    asroot install -m 644 "$d/data/io.github.design_nexus.nyx.store.policy" /usr/share/polkit-1/actions/io.github.design_nexus.nyx.store.policy
     # The privileged entry point is never executed from a user-writable directory.
-    rm -f "$bin/nixe-store-helper"
+    rm -f "$bin/nyx-store-helper"
   fi
 
   if [[ $a == passwords ]]; then
     # The vault service: started by the app (and Glimpse) when they need it.
     mkdir -p "$config/systemd/user"
-    install -m 644 "$d/data/nixe-passwords.service" "$config/systemd/user/nixe-passwords.service"
+    install -m 644 "$d/data/nyx-passwords.service" "$config/systemd/user/nyx-passwords.service"
     systemctl --user daemon-reload 2>/dev/null || true
     # A running vault restarts on the new build, which locks it.
     # Leave the running vault untouched; the new binary is used at its next start.
-    for host in nixe-settings settings; do
+    for host in nyx-settings settings; do
       ext="$share/$host/extensions/passwords"
       mkdir -p "$ext"
       cat >"$ext/extension.toml" <<'MANIFEST'
@@ -281,13 +281,13 @@ name = "Passwords"
 category = "Accounts"
 version = "0.1.0"
 description = "Vault locking, clipboard clearing and Glimpse."
-exec = "nixe-passwords-settings"
+exec = "nyx-passwords-settings"
 MANIFEST
     done
     # The browser extension, built for installing from the browser, and the native
     # messaging host for each browser that has a profile here.
-    "$d/scripts/build-extension.sh" "$share/nixe-passwords/browser" >/dev/null
-    host=io.github.design_nexus.nixe.passwords
+    "$d/scripts/build-extension.sh" "$share/nyx-passwords/browser" >/dev/null
+    host=io.github.design_nexus.nyx.passwords
     for target in "firefox:$HOME/.mozilla/native-messaging-hosts" \
       "chromium:$config/chromium/NativeMessagingHosts" \
       "chromium:$config/google-chrome/NativeMessagingHosts" \
@@ -295,16 +295,16 @@ MANIFEST
       kind=${target%%:*} dir=${target#*:}
       [[ -d $(dirname "$dir") ]] || continue
       mkdir -p "$dir"
-      sed "s|@BRIDGE@|$bin/nixe-passwords-bridge|" "$d/browser/hosts/$kind.json" >"$dir/$host.json"
+      sed "s|@BRIDGE@|$bin/nyx-passwords-bridge|" "$d/browser/hosts/$kind.json" >"$dir/$host.json"
     done
   fi
 
   if [[ $a == glimpse ]]; then
-    gshare="$share/nixe-glimpse"
+    gshare="$share/nyx-glimpse"
     mkdir -p "$gshare/scripts" "$gshare/inference"
     cp -a "$d/scripts/." "$gshare/scripts/"
     cp -a "$d/inference/." "$gshare/inference/"
-    for host in nixe-settings settings; do
+    for host in nyx-settings settings; do
       ext="$share/$host/extensions/glimpse"
       mkdir -p "$ext"
       cat >"$ext/extension.toml" <<'MANIFEST'
@@ -313,10 +313,10 @@ name = "Glimpse"
 category = "Desktop"
 version = "0.1.0"
 description = "Local search, sources, semantic models, plugins, and privacy."
-exec = "nixe-glimpse-settings"
+exec = "nyx-glimpse-settings"
 MANIFEST
     done
-    [[ ${NIXE_SKIP_INTEGRATION:-0} == 1 || ! -f $config/hypr/hyprland.lua ]] || "$bin/nixe-glimpse" integration window
+    [[ ${NYX_SKIP_INTEGRATION:-0} == 1 || ! -f $config/hypr/hyprland.lua ]] || "$bin/nyx-glimpse" integration window
   fi
 
   # The same app from before the rename.
@@ -326,20 +326,20 @@ MANIFEST
   if [[ -f $mimeapps ]]; then
     for old in $old_desktops; do
       case $old in
-        io.github.design_nexus.*) new=${old/design_nexus./design_nexus.nixe.} ;;
-        nexus-photos.desktop) new=io.github.design_nexus.nixe.Photos.desktop ;;
-        npv.desktop) new=io.github.design_nexus.nixe.PhotoViewer.desktop ;;
-        nexus-*.desktop) k=${old#nexus-}; k=${k%.desktop}; new="io.github.design_nexus.nixe.${k^}.desktop" ;;
+        io.github.design_nexus.*) new=${old/design_nexus./design_nexus.nyx.} ;;
+        nexus-photos.desktop) new=io.github.design_nexus.nyx.Photos.desktop ;;
+        npv.desktop) new=io.github.design_nexus.nyx.PhotoViewer.desktop ;;
+        nexus-*.desktop) k=${old#nexus-}; k=${k%.desktop}; new="io.github.design_nexus.nyx.${k^}.desktop" ;;
       esac
       if grep -q "$old" "$mimeapps"; then
-        [[ -f $mimeapps.nixe-bak ]] || cp "$mimeapps" "$mimeapps.nixe-bak"
+        [[ -f $mimeapps.nyx-bak ]] || cp "$mimeapps" "$mimeapps.nyx-bak"
         sed -i "s/\b${old//./\\.}/$new/g" "$mimeapps"
       fi
     done
   fi
 
   if [[ $make_default == true && $defaults == true ]]; then
-    for f in "$d"/data/io.github.design_nexus.nixe.*.desktop; do
+    for f in "$d"/data/io.github.design_nexus.nyx.*.desktop; do
       # Write leaves plain text and Markdown to the text editor.
       types=$(sed -n 's/^MimeType=//p' "$f" | tr ';' '\n' | grep -v '^text/plain$\|^text/markdown$\|x-nexus-' | tr '\n' ' ')
       # shellcheck disable=SC2086
@@ -349,8 +349,8 @@ MANIFEST
   fi
 done
 
-# The suite's own command: nixe list, install, update, uninstall.
-[[ -x $bin/nixe ]] || install -m 755 "$src/bin/nixe" "$bin/nixe"
+# The suite's own command: nyx list, install, update, uninstall.
+[[ -x $bin/nyx ]] || install -m 755 "$src/bin/nyx" "$bin/nyx"
 
 update-desktop-database "$desk" 2>/dev/null || true
 # User-local hicolor directories need not contain an index.theme.
@@ -359,26 +359,26 @@ gtk-update-icon-cache -f -t -q "$share/icons/hicolor" || warn "Could not refresh
 
 # ---------- Hyprland: windows that open floating ----------
 hypr="$config/hypr"
-if [[ ${NIXE_SKIP_INTEGRATION:-0} != 1 && " ${apps[*]} " != " glimpse " && -f $hypr/hyprland.lua ]] && grep -q 'o\.window' "$hypr/hyprland.lua" 2>/dev/null; then
+if [[ ${NYX_SKIP_INTEGRATION:-0} != 1 && " ${apps[*]} " != " glimpse " && -f $hypr/hyprland.lua ]] && grep -q 'o\.window' "$hypr/hyprland.lua" 2>/dev/null; then
   rules=""
-  [[ -x $bin/nixe-notepad ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Notepad$", { float = true, center = true, size = { 900, 700 } })'$'\n'
-  [[ -x $bin/nixe-capture ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Capture\\.Pin$", { float = true, pin = true, size = { 480, 320 } })'$'\n'
-  [[ -x $bin/nixe-archive ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Archive$", { float = true, center = true, size = { 960, 640 } })'$'\n'
-  if [[ -x $bin/nixe-weather ]] && grep -q '^float_window *= *true' "$config/nixe-weather/settings.toml" 2>/dev/null; then
-    rules+='o.window("^io\\.github\\.design_nexus\\.nixe\\.Weather$", { float = true, center = true, size = { 460, 720 } })'$'\n'
+  [[ -x $bin/nyx-notepad ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nyx\\.Notepad$", { float = true, center = true, size = { 900, 700 } })'$'\n'
+  [[ -x $bin/nyx-capture ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nyx\\.Capture\\.Pin$", { float = true, pin = true, size = { 480, 320 } })'$'\n'
+  [[ -x $bin/nyx-archive ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nyx\\.Archive$", { float = true, center = true, size = { 960, 640 } })'$'\n'
+  if [[ -x $bin/nyx-weather ]] && grep -q '^float_window *= *true' "$config/nyx-weather/settings.toml" 2>/dev/null; then
+    rules+='o.window("^io\\.github\\.design_nexus\\.nyx\\.Weather$", { float = true, center = true, size = { 460, 720 } })'$'\n'
   fi
-  # Weather writes its own rule into nixe.lua when it's set to float, so the file
+  # Weather writes its own rule into nyx.lua when it's set to float, so the file
   # must be loaded even while no rule is in it yet.
-  if [[ -n $rules || -x $bin/nixe-weather ]]; then
-    printf -- '-- Written by the Nixe installer: Nixe apps that open as floating windows.\n-- Reinstalling an app rewrites this file.\n%s' "$rules" >"$hypr/nixe.lua"
-    if ! grep -q 'require("hypr.nixe")' "$hypr/hyprland.lua"; then
+  if [[ -n $rules || -x $bin/nyx-weather ]]; then
+    printf -- '-- Written by the Nyx installer: Nyx apps that open as floating windows.\n-- Reinstalling an app rewrites this file.\n%s' "$rules" >"$hypr/nyx.lua"
+    if ! grep -q 'require("hypr.nyx")' "$hypr/hyprland.lua"; then
       cp "$hypr/hyprland.lua" "$hypr/hyprland.lua.bak.$(date +%s)"
-      # Drop the hand-written rule for Notepad's old window class; nixe.lua has it now.
+      # Drop the hand-written rule for Notepad's old window class; nyx.lua has it now.
       sed -i '/^-- Nexus Notepad opens floating and centered\.$/d; /design_nexus\\\\\.Notepad\$"/d' "$hypr/hyprland.lua"
       if grep -q '^require("hypr.settings")' "$hypr/hyprland.lua"; then
-        sed -i 's/^require("hypr.settings")/require("hypr.nixe") -- Nixe apps (floating windows)\n&/' "$hypr/hyprland.lua"
+        sed -i 's/^require("hypr.settings")/require("hypr.nyx") -- Nyx apps (floating windows)\n&/' "$hypr/hyprland.lua"
       else
-        printf '\nrequire("hypr.nixe") -- Nixe apps (floating windows)\n' >>"$hypr/hyprland.lua"
+        printf '\nrequire("hypr.nyx") -- Nyx apps (floating windows)\n' >>"$hypr/hyprland.lua"
       fi
     fi
     if command -v hyprctl >/dev/null && hyprctl reload >/dev/null 2>&1; then
@@ -399,8 +399,8 @@ fi
 
 if printf '%s\n' "${apps[@]}" | grep -qx settings; then
   # Rewrite the managed Hyprland file so its bindings call the new programs.
-  if [[ -f $config/settings/state.json || -f $config/nixe-settings/state.json ]]; then
-    "$bin/nixe-settings" --apply || true
+  if [[ -f $config/settings/state.json || -f $config/nyx-settings/state.json ]]; then
+    "$bin/nyx-settings" --apply || true
   fi
   if [[ $gear == true ]]; then
     dest="$config/omarchy/plugins/design-nexus.settings-gear"

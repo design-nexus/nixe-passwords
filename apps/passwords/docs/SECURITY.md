@@ -1,4 +1,4 @@
-# Nixe Passwords — security
+# Nyx Passwords — security
 
 This file is the threat model and the rules every change has to keep. If a change
 can't meet a rule, the change waits; the rule doesn't bend.
@@ -38,7 +38,7 @@ paired browser asking about its own origin.
 
 On a Linux desktop any process running as the user can read the user's files, run
 the user's binaries and talk to the compositor. No password manager fully defends
-against that. What Nixe Passwords does:
+against that. What Nyx Passwords does:
 
 - The daemon calls `prctl(PR_SET_DUMPABLE, 0)` and sets `RLIMIT_CORE` to 0: no core
   dumps, and with Yama `ptrace_scope ≥ 1` no ptrace by other user processes.
@@ -103,7 +103,7 @@ dropped on lock.
 ## Rules for code
 
 1. **No custom cryptography.** Every KDF, cipher, MAC, hash and key-wrap call goes
-   through `nixe-passwords-core/src/crypto.rs`, and that module only calls
+   through `nyx-passwords-core/src/crypto.rs`, and that module only calls
    bitwarden-crypto (and, for native messaging, RustCrypto's `x25519-dalek`, `hkdf` and
    `aes-gcm`; for the security report, `sha2` and `sha1`). No other module names a
    primitive. The one exception is `ssh.rs`, which uses RustCrypto's `ssh-key` for SSH
@@ -173,4 +173,4 @@ and changed in [REVIEW.md](REVIEW.md).
 ## Reporting
 
 Report vulnerabilities privately through GitHub security advisories on
-`design-nexus/nixe`, not in public issues.
+`design-nexus/nyx`, not in public issues.

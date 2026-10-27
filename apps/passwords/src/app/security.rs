@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use gtk::{glib, prelude::*};
-use nixe_ui::widgets as w;
+use nyx_ui::widgets as w;
 
 use super::client;
 use super::data::Entry;
@@ -131,7 +131,7 @@ fn ask_and_check(ui: &Ui, button: &gtk::Button) {
         button.set_sensitive(true);
         match reply.map(|json| serde_json::from_str::<Vec<Exposed>>(&json).unwrap_or_default()) {
             // Locked while it ran: nothing of the vault goes back into the window.
-            Ok(_) if *ui.state.borrow() != nixe_passwords_proto::state::UNLOCKED => {}
+            Ok(_) if *ui.state.borrow() != nyx_passwords_proto::state::UNLOCKED => {}
             Ok(found) => {
                 let n = found.len();
                 ui.security.borrow_mut().breaches = Some(found.into_iter().map(|e| (e.id, e.count)).collect());

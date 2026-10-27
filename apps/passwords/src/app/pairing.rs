@@ -4,7 +4,7 @@
 use std::cell::Cell;
 
 use gtk::{glib, prelude::*};
-use nixe_ui::widgets as w;
+use nyx_ui::widgets as w;
 use serde::Deserialize;
 
 use super::client;

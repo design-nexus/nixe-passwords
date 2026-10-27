@@ -8,7 +8,7 @@
 
 use std::io::Read;
 
-use nixe_passwords_core::secret::Secret;
+use nyx_passwords_core::secret::Secret;
 use wl_clipboard_rs::copy::{self, ClipboardType, MimeType, ServeRequests, Source};
 use wl_clipboard_rs::paste;
 
