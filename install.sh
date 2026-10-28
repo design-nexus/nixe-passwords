@@ -364,6 +364,7 @@ if [[ ${NYX_SKIP_INTEGRATION:-0} != 1 && " ${apps[*]} " != " glimpse " && -f $hy
   [[ -x $bin/nyx-notepad ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nyx\\.Notepad$", { float = true, center = true, size = { 900, 700 } })'$'\n'
   [[ -x $bin/nyx-capture ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nyx\\.Capture\\.Pin$", { float = true, pin = true, size = { 480, 320 } })'$'\n'
   [[ -x $bin/nyx-archive ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nyx\\.Archive$", { float = true, center = true, size = { 960, 640 } })'$'\n'
+  [[ -x $bin/nyx-calculator ]] && rules+='o.window("^io\\.github\\.design_nexus\\.nyx\\.Calculator$", { float = true, center = true })'$'\n'
   if [[ -x $bin/nyx-weather ]] && grep -q '^float_window *= *true' "$config/nyx-weather/settings.toml" 2>/dev/null; then
     rules+='o.window("^io\\.github\\.design_nexus\\.nyx\\.Weather$", { float = true, center = true, size = { 460, 720 } })'$'\n'
   fi
