@@ -344,6 +344,34 @@ fn starting_kind(ui: &Ui) -> &'static str {
     KINDS.iter().copied().find(|k| *k == section.as_str()).unwrap_or("login")
 }
 
+/// The editor: a card over the window rather than a window of its own, so it can't fall
+/// behind the main window or keep the app from closing.
+#[derive(Clone)]
+pub struct Sheet {
+    veil: gtk::Box,
+    ui: std::rc::Weak<ui::State>,
+}
+
+impl Sheet {
+    pub fn close(&self) {
+        if let Some(overlay) = self.veil.parent().and_downcast::<gtk::Overlay>() {
+            if let Some(child) = overlay.child() {
+                child.set_sensitive(true);
+            }
+            overlay.remove_overlay(&self.veil);
+        }
+        if let Some(ui) = self.ui.upgrade()
+            && let Ok(mut editor) = ui.editor.try_borrow_mut()
+        {
+            editor.take();
+        }
+    }
+
+    pub fn present(&self) {
+        self.veil.child_focus(gtk::DirectionType::TabForward);
+    }
+}
+
 pub fn open(ui: &Ui, entry: Option<Entry>) {
     if let Some(e) = ui.editor.borrow().as_ref() {
         e.present();
@@ -360,17 +388,35 @@ pub fn open(ui: &Ui, entry: Option<Entry>) {
         Some(_) => format!("Edit {}", noun(kind)),
         None => "New item".to_string(),
     };
-    let (dialog, card) = w::dialog(&title, 560);
-    dialog.set_default_height(720);
-    dialog.set_transient_for(Some(&ui.window));
-    dialog.set_application(ui.window.application().as_ref());
+    let veil = w::vbox(0);
+    veil.add_css_class("settings-veil");
+    veil.set_hexpand(true);
+    veil.set_vexpand(true);
+    let card = w::vbox(12);
+    card.add_css_class("dialog-card");
+    card.add_css_class("editor-sheet");
+    card.set_halign(gtk::Align::Center);
+    card.set_valign(gtk::Align::Center);
+    card.set_vexpand(true);
+    card.set_size_request(560, -1);
+    card.append(&w::label(&title, "section-title"));
+    veil.append(&card);
+    // The window behind can't be clicked or tabbed into while the editor is open.
+    if let Some(child) = ui.overlay.child() {
+        child.set_sensitive(false);
+    }
+    ui.overlay.add_overlay(&veil);
+    ui.overlay.set_measure_overlay(&veil, false);
+    ui::raise_toast(ui);
+    let dialog = Sheet { veil: veil.clone(), ui: Rc::downgrade(ui) };
     *ui.editor.borrow_mut() = Some(dialog.clone());
-    let u = ui.clone();
-    dialog.connect_destroy(move |_| *u.editor.borrow_mut() = None);
 
     let body = w::vbox(8);
     let scroll = ui::scroll(&body);
-    scroll.set_min_content_height(360);
+    scroll.set_vexpand(false);
+    scroll.set_propagate_natural_height(true);
+    scroll.set_min_content_height(280);
+    scroll.set_max_content_height(520);
     card.append(&scroll);
     let banner = w::vbox(0);
     body.append(&banner);
@@ -562,8 +608,7 @@ pub fn open(ui: &Ui, entry: Option<Entry>) {
         }
         glib::Propagation::Proceed
     });
-    dialog.add_controller(keys);
-    dialog.present();
+    veil.add_controller(keys);
     form.name.grab_focus();
 }
 
@@ -595,7 +640,7 @@ fn text_of(view: &gtk::TextView) -> String {
 
 /// Fetches the item's fields into the form: a login's password and one-time code key,
 /// or a note's, card's or identity's own fields; then the notes.
-fn fill_secrets(ui: &Ui, id: &str, form: &Rc<Form>, dialog: &gtk::Window) {
+fn fill_secrets(ui: &Ui, id: &str, form: &Rc<Form>, dialog: &Sheet) {
     let (ui, id, form, dialog) = (ui.clone(), id.to_string(), form.clone(), dialog.clone());
     glib::spawn_future_local(async move {
         let entry = ui.listing.borrow().entries.iter().find(|e| e.id == id).cloned();
@@ -659,7 +704,7 @@ fn set_field(form: &Form, name: &str, value: &str) {
     }
 }
 
-fn submit(ui: &Ui, form: &Rc<Form>, id: Option<String>, dialog: &gtk::Window, save: &gtk::Button) {
+fn submit(ui: &Ui, form: &Rc<Form>, id: Option<String>, dialog: &Sheet, save: &gtk::Button) {
     let name = form.name.text().trim().to_string();
     let kind = form.kind.get();
     if name.is_empty() {

@@ -327,13 +327,12 @@ pub fn open(ui: &Ui) {
         glib::ControlFlow::Continue
     });
     g.append(&w::row("Current colors", "", Some(swatches.upcast_ref())));
-    for (name, on, motion) in [("Glow", p.glow, false), ("Reduce motion", p.reduce_motion, true)] {
-        let (r, _) = w::switch_row(name, "", on, move |on| {
-            prefs::update(|p| if motion { p.reduce_motion = on } else { p.glow = on });
-            theme::apply();
-        });
-        g.append(&r);
-    }
+    g.append(&nyx_ui::widgets::accent_row("passwords"));
+    let (r, _) = w::switch_row("Reduce motion", "Turn off transitions and animations in this window.", p.reduce_motion, |on| {
+        prefs::update(|p| p.reduce_motion = on);
+        theme::apply();
+    });
+    g.append(&r);
 
     let g = group(&body, "Keyboard");
     for (keys, action) in ui::SHORTCUTS {
@@ -350,7 +349,7 @@ pub fn open(ui: &Ui) {
                 ("Generator", "media-playlist-shuffle-symbolic", "Passwords and passphrases"),
                 ("Integrations", "system-search-symbolic", "Glimpse, Nyx Assistant"),
                 ("Browsers", "web-browser-symbolic", "Paired browsers, the extension"),
-                ("Passwords window", "applications-graphics-symbolic", "Theme and motion"),
+                ("Passwords window", "applications-graphics-symbolic", "Theme, accent, motion"),
                 ("Keyboard", "input-keyboard-symbolic", "Shortcuts"),
             ],
             search_text: None,

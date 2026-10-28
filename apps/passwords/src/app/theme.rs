@@ -2,6 +2,7 @@ use super::prefs;
 pub use nyx_theme::*;
 
 pub fn install() {
+    nyx_theme::use_design_2();
     nyx_theme::install(Style {
         window_class: "passwords-window",
         base_skip: &[],

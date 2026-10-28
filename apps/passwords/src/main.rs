@@ -15,8 +15,10 @@ fn main() -> glib::ExitCode {
         // SAFETY: set before any thread starts.
         unsafe { std::env::set_var("GSK_RENDERER", "ngl") };
     }
+    // NYX_PASSWORDS_APP_ID runs a test copy beside the real one (its own window class).
+    let id = std::env::var("NYX_PASSWORDS_APP_ID").unwrap_or_else(|_| "io.github.design_nexus.nyx.Passwords".into());
     let app = gtk::Application::builder()
-        .application_id("io.github.design_nexus.nyx.Passwords")
+        .application_id(id)
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
     app.connect_command_line(|app, cl| {

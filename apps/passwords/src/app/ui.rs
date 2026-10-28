@@ -1,6 +1,5 @@
-//! The window: sidebar, item list and details while the vault is open; the sign-in or
-//! unlock page otherwise. Built like Contacts (STYLE.md: Music's sidebar, the shared
-//! settings card, status bar actions).
+//! The window: the shared header, then the sidebar, item list and details while the
+//! vault is open; the sign-in or unlock page otherwise (Nyx Design 2.0, STYLE.md).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -19,12 +18,13 @@ pub struct State {
     pub window: gtk::ApplicationWindow,
     pub overlay: gtk::Overlay,
     nav: gtk::Box,
-    head: gtk::Box,
+    header: chrome::AppHeader,
+    collapse: gtk::Button,
+    new_button: gtk::Button,
     sidebar: gtk::Box,
     /// "account" (sign in, unlock) or "vault".
     pages: gtk::Stack,
     pub account: gtk::Box,
-    toolbar: gtk::Box,
     pub list: gtk::ListBox,
     list_scroll: gtk::ScrolledWindow,
     pub details: gtk::Box,
@@ -43,10 +43,10 @@ pub struct State {
     pub narrow: Cell<bool>,
     pub showing_detail: Cell<bool>,
     rebuilding: Cell<bool>,
-    pub editor: RefCell<Option<gtk::Window>>,
+    pub editor: RefCell<Option<editor::Sheet>>,
     /// Bumped whenever details are rebuilt, so timers from older ones stop.
     pub detail_serial: Cell<u64>,
-    /// The security report (`security.rs`), and its part of the toolbar.
+    /// The security report (`security.rs`), and its header action.
     pub security: RefCell<security::Report>,
     security_bar: gtk::Box,
 }
@@ -75,6 +75,50 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     let overlay = gtk::Overlay::new();
     let frame = w::vbox(0);
     frame.add_css_class("window-frame");
+
+    // The app and the section, the sidebar toggle; search in the middle; the item count
+    // and sync, lock, new item and Settings at the end.
+    let header = chrome::app_header(&window, "nyx-key-symbolic", "Passwords");
+    let collapse = w::bar_button("sidebar-show-symbolic", "Collapse the sidebar (Ctrl+B)");
+    header.start.append(&collapse);
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some("Search the vault (Ctrl+F)"));
+    search.add_css_class("bar-search");
+    // A small minimum keeps the header narrow enough for a half-screen tile.
+    search.set_width_chars(8);
+    search.set_max_width_chars(SEARCH_WIDE);
+    header.center.append(&search);
+    header.end.set_spacing(4);
+    let status = w::label("", "header-status");
+    status.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    status.set_max_width_chars(26);
+    status.set_margin_end(4);
+    header.end.append(&status);
+    let sync_button = w::bar_button("view-refresh-symbolic", "Sync now (F5)");
+    sync_button.connect_clicked(|_| {
+        if let Some(ui) = current() {
+            sync(&ui);
+        }
+    });
+    sync_button.set_visible(false);
+    // The Security section's breach check, filled in once the state exists.
+    let security_bar = w::hbox(0);
+    header.end.append(&security_bar);
+    header.end.append(&sync_button);
+    let lock_button = w::bar_button("system-lock-screen-symbolic", "Lock the vault (Ctrl+L)");
+    lock_button.connect_clicked(|_| {
+        if let Some(ui) = current() {
+            lock(&ui);
+        }
+    });
+    lock_button.set_visible(false);
+    header.end.append(&lock_button);
+    let new = w::bar_button("list-add-symbolic", "New item (Ctrl+N)");
+    new.set_visible(false);
+    header.end.append(&new);
+    header.end.append(&chrome::settings_button(open_settings));
+    frame.append(&header.root);
+
     let body = w::hbox(0);
     body.set_vexpand(true);
     frame.append(&body);
@@ -84,9 +128,6 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     let sidebar = w::vbox(0);
     sidebar.set_hexpand(false); // Required: expanding labels must not expand the sidebar.
     sidebar.add_css_class("settings-navigation");
-    // Search lives in the list toolbar, always there, so the head has no search button.
-    let head = chrome::sidebar_head("Passwords", None);
-    sidebar.append(&head.root);
     let nav = w::vbox(0);
     nav.set_hexpand(false);
     let nav_scroll = gtk::ScrolledWindow::builder()
@@ -114,19 +155,6 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     pages.add_named(&scroll(&account), Some("account"));
 
     let vault = w::vbox(0);
-    let toolbar = w::hbox(6);
-    toolbar.add_css_class("list-toolbar");
-    vault.append(&toolbar);
-    let search = gtk::SearchEntry::new();
-    search.set_placeholder_text(Some("Search the vault (Ctrl+F)"));
-    search.set_hexpand(true);
-    toolbar.append(&search);
-    let security_bar = w::hbox(0);
-    toolbar.append(&security_bar);
-    let new = gtk::Button::from_icon_name("list-add-symbolic");
-    new.add_css_class("suggested-action");
-    new.set_tooltip_text(Some("New item (Ctrl+N)"));
-    toolbar.append(&new);
     let panes = w::hbox(0);
     panes.set_vexpand(true);
     vault.append(&panes);
@@ -154,38 +182,6 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     panes.append(&detail_scroll);
     pages.add_named(&vault, Some("vault"));
 
-    let statusbar = w::hbox(16);
-    statusbar.add_css_class("status-bar");
-    let shortcuts = gtk::Button::new();
-    shortcuts.add_css_class("status-help");
-    shortcuts.set_tooltip_text(Some("Show the keyboard shortcuts (F1)"));
-    let help = w::hbox(10);
-    help.append(&w::label("F1", "status-key"));
-    help.append(&w::label("Shortcuts", ""));
-    shortcuts.set_child(Some(&help));
-    shortcuts.connect_clicked(|_| show_shortcuts());
-    statusbar.append(&shortcuts);
-    let status = w::label("", "status-readout");
-    status.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    status.set_hexpand(true);
-    status.set_xalign(1.0);
-    statusbar.append(&status);
-    let sync_button = chrome::status_action("view-refresh-symbolic", "Sync now (F5)", || {
-        if let Some(ui) = current() {
-            sync(&ui);
-        }
-    });
-    sync_button.set_visible(false);
-    statusbar.append(&sync_button);
-    let lock_button = chrome::status_action("system-lock-screen-symbolic", "Lock the vault (Ctrl+L)", || {
-        if let Some(ui) = current() {
-            lock(&ui);
-        }
-    });
-    lock_button.set_visible(false);
-    statusbar.append(&lock_button);
-    statusbar.append(&chrome::gear(open_settings));
-    frame.append(&statusbar);
 
     let toast_box = w::hbox(10);
     toast_box.add_css_class("toast");
@@ -200,11 +196,12 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
         window,
         overlay,
         nav,
-        head: head.root,
+        header,
+        collapse: collapse.clone(),
+        new_button: new.clone(),
         sidebar,
         pages,
         account,
-        toolbar,
         list,
         list_scroll,
         details,
@@ -233,7 +230,7 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     let u = ui.clone();
     new.connect_clicked(move |_| editor::open(&u, None));
     let u = ui.clone();
-    head.toggle.connect_clicked(move |_| {
+    collapse.connect_clicked(move |_| {
         prefs::update(|p| p.sidebar_collapsed = !p.sidebar_collapsed);
         layout(&u);
     });
@@ -290,6 +287,10 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     let keys = gtk::EventControllerKey::new();
     let u = ui.clone();
     keys.connect_key_pressed(move |_, key, _, mods| {
+        // The editor's own keys (Ctrl+S, Esc) only while it's open.
+        if u.editor.borrow().is_some() {
+            return glib::Propagation::Proceed;
+        }
         let ctrl = mods.contains(gdk::ModifierType::CONTROL_MASK);
         let shift = mods.contains(gdk::ModifierType::SHIFT_MASK);
         let open = *u.state.borrow() == state::UNLOCKED;
@@ -322,15 +323,6 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
         glib::Propagation::Stop
     });
     ui.window.add_controller(keys);
-    let u = ui.clone();
-    ui.window.connect_close_request(move |_| {
-        if let Some(e) = u.editor.borrow().as_ref() {
-            e.present();
-            return glib::Propagation::Stop;
-        }
-        glib::Propagation::Proceed
-    });
-
     refresh_state(&ui);
     watch_state(&ui);
     ui.window.present();
@@ -338,7 +330,7 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
         toast(&ui, "Settings couldn't be read. The original is kept as settings.toml.bak.");
     }
     #[cfg(debug_assertions)]
-    super::snapshot::maybe(&ui, app);
+    super::fixture::maybe(&ui);
     ui
 }
 
@@ -384,8 +376,11 @@ pub fn set_state(ui: &Ui, st: &str) {
     let open = st == state::UNLOCKED;
     // Nothing to navigate or search until the vault is open.
     ui.sidebar.set_visible(open);
+    ui.collapse.set_visible(open);
+    ui.search.set_visible(open);
     ui.lock_button.set_visible(open);
     ui.sync_button.set_visible(open);
+    ui.new_button.set_visible(open);
     if open {
         ui.pages.set_visible_child_name("vault");
         reload(ui);
@@ -397,20 +392,18 @@ pub fn set_state(ui: &Ui, st: &str) {
         *ui.selected.borrow_mut() = None;
         clear(&ui.details);
         clear(&ui.list);
-        if let Some(e) = ui.editor.borrow_mut().take() {
-            e.destroy();
+        let editor = ui.editor.borrow_mut().take();
+        if let Some(e) = editor {
+            e.close();
         }
         ui.search.set_text("");
         ui.pages.set_visible_child_name("account");
         if changed || st.is_empty() {
             account::show(ui, st);
         }
-        ui.status.set_text(match st {
-            state::LOCKED => "Locked",
-            state::LOGGED_OUT => "Not signed in",
-            _ => "",
-        });
-        chrome::set_title(&ui.window, "Passwords", if st == state::LOCKED { "Locked" } else { "Sign in" });
+        // The subtitle says locked or signed out; the readout is for the open vault.
+        ui.status.set_text("");
+        set_subtitle(ui, if st == state::LOCKED { "Locked" } else { "Sign in" });
     }
     nav(ui);
     layout(ui);
@@ -681,25 +674,31 @@ pub fn nav(ui: &Ui) {
         }
     }
     match title {
-        Some(t) => chrome::set_title(&ui.window, "Passwords", &t),
+        Some(t) => set_subtitle(ui, &t),
         // The section's folder or collection is gone: back to everything.
         None => {
             *ui.section.borrow_mut() = "all".into();
-            chrome::set_title(&ui.window, "Passwords", "All items");
+            set_subtitle(ui, "All items");
         }
     }
     compact_sidebar(ui);
 }
+
+const SEARCH_WIDE: i32 = 28;
+const SEARCH_NARROW: i32 = 14;
 
 pub fn layout(ui: &Ui) {
     let width = if ui.window.width() > 0 { ui.window.width() } else { ui.window.default_width() };
     let narrow = width > 0 && width < 980;
     nyx_ui::settings_card::fit(&ui.window);
     ui.narrow.set(narrow);
+    // The centred search mustn't reach the sidebar toggle or the actions beside it.
+    ui.search.set_max_width_chars(if narrow { SEARCH_NARROW } else { SEARCH_WIDE });
     compact_sidebar(ui);
     let empty = visible(ui).is_empty();
-    ui.toolbar.set_visible(*ui.section.borrow() != "trash");
-    ui.security_bar.set_visible(*ui.section.borrow() == "security");
+    let open = *ui.state.borrow() == state::UNLOCKED;
+    ui.security_bar.set_visible(open && *ui.section.borrow() == "security");
+    ui.new_button.set_visible(open && *ui.section.borrow() != "trash");
     ui.list_scroll.set_hexpand(narrow || empty);
     ui.list_scroll.set_visible(empty || !narrow || !ui.showing_detail.get());
     ui.detail_scroll.set_visible(!empty && (!narrow || ui.showing_detail.get()));
@@ -719,7 +718,6 @@ fn compact_sidebar(ui: &Ui) {
     } else {
         ui.sidebar.remove_css_class("compact");
     }
-    chrome::set_head_compact(&ui.head, compact);
     fn hide(root: &gtk::Widget, compact: bool) {
         if root.has_css_class("nav-item")
             && let Some(content) = root.downcast_ref::<gtk::Button>().and_then(|b| b.child())
@@ -736,6 +734,12 @@ fn compact_sidebar(ui: &Ui) {
         }
     }
     hide(ui.nav.upcast_ref(), compact);
+}
+
+/// The section (or the lock state) beside the app name, and in the window title.
+fn set_subtitle(ui: &Ui, text: &str) {
+    ui.header.set_subtitle(text);
+    chrome::set_title(&ui.window, "Passwords", text);
 }
 
 fn find(ui: &Ui) {
@@ -783,6 +787,12 @@ pub fn scroll(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
         .vexpand(true)
         .child(child)
         .build()
+}
+
+/// Puts the toast back above overlays added after it (the editor), so it stays visible.
+pub fn raise_toast(ui: &Ui) {
+    ui.overlay.remove_overlay(&ui.toast_box);
+    ui.overlay.add_overlay(&ui.toast_box);
 }
 
 pub fn toast(ui: &Ui, text: &str) {

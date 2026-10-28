@@ -95,11 +95,10 @@ pub fn refresh(ui: &Ui) {
     });
 }
 
-/// The toolbar's part in the Security section: the breach check.
+/// The Security section's header action: the breach check.
 pub fn toolbar(ui: &Ui) -> gtk::Box {
     let bar = w::hbox(0);
-    let check = gtk::Button::from_icon_name("security-high-symbolic");
-    check.set_tooltip_text(Some("Check for breaches: look up your passwords in Have I Been Pwned's breach data"));
+    let check = w::bar_button("security-high-symbolic", "Check for breaches: look up your passwords in Have I Been Pwned's breach data");
     let u = ui.clone();
     check.connect_clicked(move |b| ask_and_check(&u, b));
     bar.append(&check);

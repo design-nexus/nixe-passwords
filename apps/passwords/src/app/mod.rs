@@ -11,6 +11,6 @@ pub mod prefs;
 mod security;
 mod settings;
 #[cfg(debug_assertions)]
-pub mod snapshot;
+pub mod fixture;
 mod theme;
 pub mod ui;
