@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Passkey · Nyx Passwords</title>
+    <link rel="stylesheet" href="theme.css" />
+    <style>
+      body { padding: 20px; display: flex; flex-direction: column; gap: 12px; min-height: 100vh; }
+      .top { display: flex; align-items: center; gap: 12px; }
+      .top .tile { --size: 44px; background: var(--accent); color: var(--on-accent); }
+      h1 { font-size: 16px; font-weight: 600; margin: 0; }
+      #detail { color: var(--dim); margin-top: 3px; }
+      #choices { padding: 4px; display: flex; flex-direction: column; gap: 2px; }
+      .row:focus { background: var(--hover); outline: none; }
+      .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: auto; }
+      .buttons .left { margin-right: auto; }
+    </style>
+  </head>
+  <body>
+    <div class="top"><span class="tile" id="mark"></span><div><h1 id="title"></h1><div id="detail"></div></div></div>
+    <div class="card" id="choices"></div>
+    <div class="buttons"><button class="ghost left" id="browser">Use the browser's own</button><button id="cancel">Cancel</button></div>
+    <script src="nyx.js"></script>
+    <script src="confirm.js"></script>
+  </body>
+</html>

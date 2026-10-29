@@ -1,0 +1,185 @@
+/* The Nyx 2.0 look (nyx-design STYLE.md) for the extension's pages: one solid surface,
+   Inter, cards for groups, the app's accent only for state. The colours are Passwords'
+   own theme, set by nyx.js; these are Nyx Dark and Nyx Light until it arrives. */
+:root {
+  --bg: #09090a;
+  --panel: #0e0e0f;
+  --card: #161617;
+  --raised: #1d1d1f;
+  --popover: #1a1a1c;
+  --surface: #1a1a1c;
+  --text: #e8e8ea;
+  --dim: #9a9aa1;
+  --tertiary: #7b7b83;
+  --accent: #5b9cff;
+  --on-accent: #ffffff;
+  --border: #2a2a2d;
+  --divider: #1a1a1c;
+  --danger: #ff6b6b;
+  --warning: #e0a63a;
+  --success: #46d08a;
+  --hover-pct: 6%;
+  --selection-pct: 16%;
+  --font-ui: "Inter", "Inter Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --r-small: 7px;
+  --r-card: 11px;
+  --r-dialog: 15px;
+  --scale: 1;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-light]) {
+    --bg: #f7f7f8;
+    --panel: #f0f0f2;
+    --card: #ffffff;
+    --raised: #ffffff;
+    --popover: #ffffff;
+    --surface: #ffffff;
+    --text: #18181b;
+    --dim: #5a5a64;
+    --tertiary: #6c6c76;
+    --accent: #2f6fea;
+    --border: #dcdce1;
+    --divider: #e6e6ea;
+    --danger: #d93a3a;
+    --warning: #b7791f;
+    --success: #1f9e5c;
+    --hover-pct: 5%;
+    --selection-pct: 14%;
+  }
+}
+:root {
+  --hover: color-mix(in srgb, var(--accent) var(--hover-pct), transparent);
+  --selected: color-mix(in srgb, var(--accent) var(--selection-pct), transparent);
+  --field: color-mix(in srgb, var(--text) 6%, var(--bg));
+  --track: color-mix(in srgb, var(--text) 14%, var(--bg));
+  --shadow: 0 10px 30px rgb(0 0 0 / 0.35), 0 1px 3px rgb(0 0 0 / 0.25);
+  color-scheme: dark;
+}
+:root[data-light="true"] { color-scheme: light; --shadow: 0 10px 30px rgb(0 0 0 / 0.12), 0 1px 3px rgb(0 0 0 / 0.08); }
+html:not(.themed) body { opacity: 0; }
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--track) transparent; }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 calc(13px * var(--scale)) / 1.35 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  transition: opacity 120ms ease-out;
+}
+::selection { background: var(--selected); }
+.nx-icon { display: inline-flex; flex: none; }
+.nx-icon svg { display: block; }
+.mono { font-family: var(--font-mono); font-feature-settings: "tnum"; }
+.dim { color: var(--dim); }
+
+/* Buttons: icon buttons with tooltips; text only where an icon can't say it. */
+button {
+  font: inherit;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--field);
+  border: 0;
+  border-radius: var(--r-small);
+  height: 32px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+button:hover { background: color-mix(in srgb, var(--text) 10%, var(--bg)); }
+button:focus-visible, .row:focus-visible, input:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 1px; }
+button.primary { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+button.ghost { background: transparent; color: var(--dim); }
+button.ghost:hover { background: var(--hover); color: var(--text); }
+button.danger:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+button.icon { width: 32px; padding: 0; background: transparent; color: var(--dim); }
+button.icon:hover { background: var(--hover); color: var(--text); }
+button.icon.on { background: var(--selected); color: var(--accent); }
+button.small { height: 26px; padding: 0 9px; font-size: 0.92em; }
+button.icon.small { width: 26px; padding: 0; }
+button:disabled { opacity: 0.45; cursor: default; }
+
+input[type="text"], input[type="search"], input[type="number"] {
+  font: inherit;
+  color: var(--text);
+  background: var(--field);
+  border: 0;
+  border-radius: var(--r-small);
+  height: 32px;
+  padding: 0 10px;
+  width: 100%;
+}
+input::placeholder { color: var(--tertiary); }
+input:focus { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 0; }
+
+/* Switch: 36 × 20, the only pill. */
+.switch { appearance: none; flex: none; width: 36px; height: 20px; margin: 0; border-radius: 999px; background: var(--track); position: relative; cursor: pointer; transition: background 120ms ease-out; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--text); transition: transform 120ms ease-out, background 120ms ease-out; }
+.switch:checked { background: var(--accent); }
+.switch:checked::after { transform: translateX(16px); background: var(--on-accent); }
+.switch:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
+
+/* Item tiles: the site's icon, its letter on its colour, or the kind's icon. */
+.tile {
+  --size: 32px;
+  --tint: var(--accent);
+  flex: none;
+  width: var(--size);
+  height: var(--size);
+  border-radius: calc(var(--size) * 0.28);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--tint) 20%, var(--card));
+  color: var(--tint);
+  font-weight: 600;
+  font-size: calc(var(--size) * 0.44);
+  overflow: hidden;
+}
+.tile.kind { background: color-mix(in srgb, var(--accent) 16%, var(--card)); color: var(--accent); }
+.tile.favicon { background: #ffffff; }
+.tile img { width: 64%; height: 64%; object-fit: contain; }
+
+/* Rows: list-row height, radius_small, hover tint, selected tint. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 7px 8px;
+  border-radius: var(--r-small);
+  cursor: pointer;
+  transition: background 120ms ease-out;
+}
+.row:hover { background: var(--hover); }
+.row.selected { background: var(--selected); }
+.row .text { flex: 1; min-width: 0; }
+.row .title, .row .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .title { font-weight: 500; }
+.row .sub { color: var(--dim); font-size: 0.93em; margin-top: 1px; }
+
+.group-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tertiary); padding: 12px 8px 6px; display: flex; align-items: center; gap: 6px; }
+
+.card { background: var(--card); border-radius: var(--r-card); }
+
+.tag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.tag.danger { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+.tag.warning { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+
+/* The countdown ring of a one-time code: fills as the time runs out. */
+.ring { flex: none; }
+.ring .track { stroke: var(--track); }
+.ring .fill { stroke: var(--accent); transition: stroke-dashoffset 0.25s linear; }
+.ring.ending .fill { stroke: var(--warning); }
+.ring text { fill: var(--dim); font: 600 8.5px var(--font-ui); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0ms !important; }
+}

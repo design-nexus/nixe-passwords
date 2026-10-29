@@ -27,3 +27,18 @@ jobs:
           bash tools/ci-bootstrap.sh $deps
       - name: Locked build, targeted tests and package
         run: python3 tools/ci.py
+  browser-extension:
+    runs-on: ubuntu-latest
+    container: archlinux@sha256:e43f1fd80e073992c5f173efbbbf65144170bf60aeb7369940087d63eacea8f4
+    steps:
+      - name: Prepare Git checkout
+        run: |
+          printf 'Server = https://archive.archlinux.org/repos/2026/10/20/$repo/os/$arch\n' > /etc/pacman.d/mirrorlist
+          pacman -Syyuu --noconfirm --needed git nodejs npm librsvg zip unzip
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Lint the Firefox extension
+        run: |
+          out=$(apps/passwords/scripts/build-extension.sh "$PWD/target/passwords-browser" | tail -1)
+          mkdir -p target/ff-lint
+          (cd target/ff-lint && unzip -q "$out/nyx-passwords-firefox.xpi")
+          npx --yes web-ext@10.8.0 lint --source-dir target/ff-lint --warnings-as-errors

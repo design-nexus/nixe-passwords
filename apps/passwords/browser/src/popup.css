@@ -1,64 +1,104 @@
-/* The Nyx look (STYLE.md): one flat surface, monospace, one accent. Tokyo Night. */
-:root {
-  --nx-bg: #1a1b26;
-  --nx-text: #c0caf5;
-  --nx-dim-text: #565f89;
-  --nx-accent: #7aa2f7;
-  --nx-border: #292e42;
-  --nx-danger: #f7768e;
-  --hairline: color-mix(in srgb, var(--nx-bg) 18%, var(--nx-border));
-  --nav-active: color-mix(in srgb, var(--nx-bg) 82%, var(--nx-accent));
-  --row-hover: color-mix(in srgb, var(--nx-bg) 93%, var(--nx-accent));
-}
+/* The popup: search in the header, the list on the left (the page's logins first, then
+   the vault), the chosen item, the generator or settings on the right. */
+html, body { height: 100%; }
+body { width: 760px; height: 560px; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+/* Opened in a tab after installing: the same page, as a card in the middle. */
+html:has(body.welcome) { background: var(--panel); }
+body.welcome { margin: 56px auto; border-radius: var(--r-dialog); box-shadow: var(--shadow); }
 
-* { box-sizing: border-box; }
+header { flex: none; display: flex; align-items: center; gap: 10px; height: 54px; padding: 0 12px 0 14px; }
+.brand { flex: none; width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: var(--on-accent); }
+.search { flex: 1; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 8px 0 11px; border-radius: var(--r-small); background: var(--field); color: var(--tertiary); cursor: text; }
+.search:focus-within { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); color: var(--dim); }
+.search input { background: transparent; height: 100%; padding: 0; outline: none !important; font-size: 1.04em; }
+.search input::-webkit-search-cancel-button { display: none; }
+kbd { font: 500 11px var(--font-ui); color: var(--tertiary); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
+.search:focus-within kbd { display: none; }
+.header-actions { display: flex; gap: 2px; }
+header.hidden-search .search { visibility: hidden; }
 
-body {
-  margin: 0;
-  width: 340px;
-  background: var(--nx-bg);
-  color: var(--nx-text);
-  font: 500 13px "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
-}
+.panes { flex: 1; min-height: 0; display: grid; grid-template-columns: 304px 1fr; }
+.list { overflow-y: auto; padding: 0 8px 12px 10px; scrollbar-width: thin; }
+.detail { overflow-y: auto; padding: 4px 18px 18px 10px; scrollbar-width: thin; }
 
-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--hairline);
-}
+/* Filters: the kinds, as a segmented control. */
+.filters { position: sticky; top: 0; z-index: 1; background: var(--bg); padding: 2px 0 6px; }
+.segmented { display: flex; gap: 2px; padding: 2px; border-radius: var(--r-small); background: var(--field); }
+.segmented button { flex: 1; height: 28px; padding: 0 8px; background: transparent; color: var(--dim); border-radius: calc(var(--r-small) - 2px); font-size: 0.95em; }
+.segmented button:hover { color: var(--text); background: transparent; }
+.segmented button.on { background: var(--raised); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 0.25); }
+.segmented button .nx-icon { color: inherit; }
 
-.name { font-weight: 600; color: var(--nx-dim-text); }
-.host { color: var(--nx-dim-text); font-size: 0.88em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.group-label .host { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .quick { display: none; }
+.row:hover .quick, .row.selected .quick { display: inline-flex; }
+.row .star { color: var(--warning); }
+.empty-line { color: var(--tertiary); padding: 4px 8px 8px; font-size: 0.95em; }
 
-main { padding: 6px 0; max-height: 360px; overflow-y: auto; }
+/* The item. */
+.head { display: flex; align-items: center; gap: 14px; padding: 10px 2px 14px; }
+.head .text { flex: 1; min-width: 0; }
+.head .name { font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.head .sub { color: var(--dim); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+.bar button.primary { padding: 0 16px; }
+.fields { display: flex; flex-direction: column; margin-bottom: 12px; }
+.field { display: flex; align-items: center; gap: 10px; min-height: 54px; padding: 8px 8px 8px 14px; cursor: pointer; transition: background 120ms ease-out; }
+.field + .field { border-top: 1px solid var(--divider); }
+.field:first-child { border-radius: var(--r-card) var(--r-card) 0 0; }
+.field:last-child { border-radius: 0 0 var(--r-card) var(--r-card); }
+.field:only-child { border-radius: var(--r-card); }
+.field:hover { background: var(--hover); }
+.field.static { cursor: default; }
+.field.static:hover { background: transparent; }
+.field .text { flex: 1; min-width: 0; }
+.field .label { font-size: 11.5px; color: var(--dim); margin-bottom: 2px; }
+.field .value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.field .value.secret { letter-spacing: 0.12em; }
+.field .value.code { font: 600 19px var(--font-mono); letter-spacing: 0.06em; color: var(--text); }
+.field .value a { color: var(--accent); text-decoration: none; }
+.field .actions { display: flex; gap: 2px; opacity: 0; transition: opacity 120ms ease-out; }
+.field:hover .actions, .field:focus-within .actions { opacity: 1; }
+.field .actions.always { opacity: 1; }
+.banner { display: flex; gap: 10px; align-items: flex-start; padding: 11px 14px; border-radius: var(--r-card); margin-bottom: 12px; line-height: 1.4; background: color-mix(in srgb, var(--warning) 12%, var(--card)); }
+.banner .nx-icon { color: var(--warning); margin-top: 1px; }
+.banner.info { background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+.banner.info .nx-icon { color: var(--accent); }
+.banner .title { font-weight: 600; }
+.banner .buttons { display: flex; gap: 8px; margin-top: 10px; }
+.section-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tertiary); margin: 4px 2px 8px; }
+.tags { display: flex; gap: 4px; flex-wrap: wrap; }
 
-.note { margin: 10px 14px; line-height: 1.4; }
-.note.dim { color: var(--nx-dim-text); }
-.note.status { color: var(--nx-accent); }
-.code { margin: 12px 14px; font-size: 1.8em; letter-spacing: 0.15em; color: var(--nx-accent); }
+/* Nothing chosen. */
+.placeholder { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--tertiary); text-align: center; padding: 0 30px; }
+.placeholder .tile { --size: 52px; }
+.placeholder .big { color: var(--text); font-weight: 600; font-size: 15px; }
 
-.item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; }
-.item:hover { background: var(--row-hover); }
-.item .text { flex: 1; min-width: 0; }
-.item .title, .item .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.item .sub { color: var(--nx-dim-text); font-size: 0.88em; }
-.actions { display: flex; gap: 6px; }
+/* The generator. */
+.generated { font: 500 18px/1.45 var(--font-mono); word-break: break-all; padding: 16px; min-height: 92px; display: flex; align-items: center; }
+.generated .d { color: var(--accent); }
+.generated .s { color: var(--warning); }
+.option { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 14px; }
+.option + .option { border-top: 1px solid var(--divider); }
+.option .text { flex: 1; min-width: 0; }
+.option .title { font-weight: 500; }
+.option .desc { color: var(--dim); font-size: 0.93em; margin-top: 2px; line-height: 1.4; }
+.option input[type="range"] { flex: 1; accent-color: var(--accent); }
+.option .count { width: 32px; text-align: right; font-feature-settings: "tnum"; color: var(--dim); }
+.checks { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { height: 28px; padding: 0 11px; font-size: 0.95em; background: var(--field); color: var(--dim); }
+.chip.on { background: var(--selected); color: var(--accent); }
 
-footer { display: flex; justify-content: space-between; padding: 8px 14px; border-top: 1px solid var(--hairline); }
-footer:empty { display: none; }
+/* Before the vault is open: one thing in the middle. */
+.state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 0 80px 40px; text-align: center; }
+.state .tile { --size: 64px; border-radius: 18px; background: var(--accent); color: var(--on-accent); }
+.state h1 { font-size: 18px; font-weight: 600; margin: 8px 0 0; }
+.state p { color: var(--dim); margin: 0; line-height: 1.5; max-width: 420px; }
+.state .code { font: 600 34px var(--font-mono); letter-spacing: 0.18em; color: var(--accent); background: var(--card); border-radius: var(--r-card); padding: 12px 22px; margin: 6px 0; }
+.state .buttons { display: flex; gap: 8px; margin-top: 8px; }
+.spinner { width: 16px; height: 16px; border: 2px solid var(--track); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-button {
-  font: inherit;
-  color: var(--nx-text);
-  background: transparent;
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
-  padding: 5px 10px;
-  cursor: pointer;
-}
-button:hover { background: var(--row-hover); }
-button.primary { background: var(--nav-active); border-color: transparent; font-weight: 600; }
-main > button { margin: 4px 14px 10px; }
-button.flat { border-color: transparent; color: var(--nx-dim-text); }
+.toast { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: 520px; padding: 9px 14px; border-radius: var(--r-card); background: var(--surface); box-shadow: var(--shadow); font-weight: 500; z-index: 5; }
+.toast .nx-icon { color: var(--accent); }
+.toast.error .nx-icon { color: var(--danger); }

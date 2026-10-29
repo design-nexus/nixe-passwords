@@ -3,5 +3,8 @@
   "description": "Nyx Passwords",
   "path": "@BRIDGE@",
   "type": "stdio",
-  "allowed_extensions": ["nixe-passwords@design-nexus.github.io"]
+  "allowed_extensions": [
+    "nyx-passwords@design-nexus.github.io",
+    "nixe-passwords@design-nexus.github.io"
+  ]
 }

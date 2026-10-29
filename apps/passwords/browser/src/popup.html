@@ -3,15 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <title>Nyx Passwords</title>
+    <link rel="stylesheet" href="theme.css" />
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <header>
-      <span class="name">Passwords</span>
-      <span class="host" id="host"></span>
+    <header id="header">
+      <span class="brand" id="brand" title="Nyx Passwords"></span>
+      <label class="search" id="searchbox">
+        <span id="search-icon"></span>
+        <input id="search" type="search" placeholder="Search Passwords" autocomplete="off" spellcheck="false" />
+        <kbd>/</kbd>
+      </label>
+      <span class="header-actions" id="actions"></span>
     </header>
-    <main id="main"></main>
-    <footer id="footer"></footer>
+    <div class="panes" id="panes">
+      <aside class="list" id="list"></aside>
+      <section class="detail" id="detail"></section>
+    </div>
+    <main class="state" id="state" hidden></main>
+    <div class="toast" id="toast" hidden></div>
+    <script src="nyx.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

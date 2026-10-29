@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nyx Passwords</title>
+    <link rel="stylesheet" href="theme.css" />
+    <style>
+      html, body { background: transparent; height: 100%; }
+      body { margin: 0; background: var(--popover); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+      .top { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 12px; }
+      .top .mark { width: 18px; height: 18px; border-radius: 5px; background: var(--accent); color: var(--on-accent); display: inline-flex; align-items: center; justify-content: center; }
+      .top .name { font-weight: 600; color: var(--text); }
+      .top button { margin-left: auto; }
+      .what { display: flex; align-items: center; gap: 11px; }
+      .what .text { min-width: 0; flex: 1; }
+      .question { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .detail { color: var(--dim); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .buttons { display: flex; gap: 8px; justify-content: flex-end; }
+      .buttons .left { margin-right: auto; }
+    </style>
+  </head>
+  <body>
+    <div class="top"><span class="mark" id="mark"></span><span class="name">Passwords</span><button class="icon small" id="close" title="Not now"></button></div>
+    <div class="what" id="what"><div class="text"><div class="question" id="question"></div><div class="detail" id="detail"></div></div></div>
+    <div class="buttons" id="buttons"></div>
+    <script src="nyx.js"></script>
+    <script src="bar.js"></script>
+  </body>
+</html>
