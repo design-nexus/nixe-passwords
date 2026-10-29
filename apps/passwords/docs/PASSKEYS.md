@@ -1,10 +1,12 @@
 # Nyx Passwords — passkeys
 
-Status: investigation (Phase 4). Nothing here is built, and passkeys aren't advertised
-until the whole flow works and is tested. What Passwords does today: it keeps every
-passkey intact. Edits send them back as they were, and moving an item into an
-organization re-encrypts them with the item (both covered by live tests in
-`crates/nyx-passwords-core/tests/edit.rs`). It doesn't show or use them.
+Status: built. The item view lists a login's passkeys and deletes them; the browser
+extension makes and uses them (`passkey.rs`, the `passkey.*` requests in
+NATIVE_MESSAGING.md, `browser/src/page.js`). Tests: `tests/passkeys.rs` (stored as
+the official clients store them, read back by `bw`, signatures checked), the daemon's
+`paired_browser` and the headless Firefox test `firefox_extension` (made and used on a
+local https page). Still open: the round trip with the official extension, and
+conditional mediation (autofill-style requests stay with the browser).
 
 Checked 2026-10-20 against Bitwarden's clients and SDK source and its contributor
 documentation, and against Vaultwarden 1.37.4 with `bw` 2026.2.0.

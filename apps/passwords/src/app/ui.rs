@@ -40,6 +40,8 @@ pub struct State {
     pub listing: RefCell<Listing>,
     pub section: RefCell<String>,
     pub selected: RefCell<Option<String>>,
+    /// The items picked together (Ctrl- or Shift-click), when more than one is.
+    pub multi: RefCell<Vec<String>>,
     pub narrow: Cell<bool>,
     pub showing_detail: Cell<bool>,
     rebuilding: Cell<bool>,
@@ -49,6 +51,12 @@ pub struct State {
     /// The security report (`security.rs`), and its header action.
     pub security: RefCell<security::Report>,
     security_bar: gtk::Box,
+    /// The Trash section's "Empty the trash".
+    trash_bar: gtk::Box,
+    /// The daemon's `Revision` when the listing was last fetched.
+    revision: Cell<u64>,
+    /// "Restart to finish updating", when the daemon is an older build than the window.
+    update_bar: gtk::Box,
 }
 
 thread_local! { static UI: RefCell<Option<Ui>> = const { RefCell::new(None) }; }
@@ -104,6 +112,15 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     // The Security section's breach check, filled in once the state exists.
     let security_bar = w::hbox(0);
     header.end.append(&security_bar);
+    let trash_bar = w::hbox(0);
+    let empty_trash = w::bar_button("user-trash-full-symbolic", "Empty the trash: delete everything in it for good");
+    empty_trash.connect_clicked(|_| {
+        if let Some(ui) = current() {
+            detail::empty_trash(&ui);
+        }
+    });
+    trash_bar.append(&empty_trash);
+    header.end.append(&trash_bar);
     header.end.append(&sync_button);
     let lock_button = w::bar_button("system-lock-screen-symbolic", "Lock the vault (Ctrl+L)");
     lock_button.connect_clicked(|_| {
@@ -144,6 +161,9 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     content.add_css_class("settings-content");
     content.set_hexpand(true); // Only the page column receives spare horizontal space.
     body.append(&content);
+    let update_bar = w::vbox(0);
+    update_bar.set_visible(false);
+    content.append(&update_bar);
     let pages = gtk::Stack::new();
     pages.set_transition_type(gtk::StackTransitionType::Crossfade);
     pages.set_transition_duration(160);
@@ -159,7 +179,7 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     panes.set_vexpand(true);
     vault.append(&panes);
     let list = gtk::ListBox::new();
-    list.set_selection_mode(gtk::SelectionMode::Single);
+    list.set_selection_mode(gtk::SelectionMode::Multiple);
     list.add_css_class("item-list");
     let list_scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -181,7 +201,6 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     detail_scroll.add_css_class("item-detail-pane");
     panes.append(&detail_scroll);
     pages.add_named(&vault, Some("vault"));
-
 
     let toast_box = w::hbox(10);
     toast_box.add_css_class("toast");
@@ -212,10 +231,12 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
         sync_button,
         toast_box,
         toast_serial: Cell::new(0),
+        update_bar,
         state: RefCell::new(String::new()),
         listing: RefCell::new(Listing::default()),
         section: RefCell::new(start),
         selected: RefCell::new(None),
+        multi: RefCell::new(Vec::new()),
         narrow: Cell::new(false),
         showing_detail: Cell::new(false),
         rebuilding: Cell::new(false),
@@ -223,6 +244,8 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
         detail_serial: Cell::new(0),
         security: RefCell::new(security::Report::default()),
         security_bar,
+        trash_bar,
+        revision: Cell::new(0),
     });
     ui.security_bar.append(&security::toolbar(&ui));
     UI.with(|u| *u.borrow_mut() = Some(ui.clone()));
@@ -240,6 +263,7 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
     let u = ui.clone();
     ui.search.connect_activate(move |_| {
         if let Some(row) = u.list.row_at_index(0).filter(|r| r.is_selectable()) {
+            u.list.unselect_all();
             u.list.select_row(Some(&row));
             u.showing_detail.set(true);
             layout(&u);
@@ -262,8 +286,15 @@ pub fn present(app: &gtk::Application, section: Option<&str>) -> Ui {
         if u.rebuilding.get() {
             return;
         }
-        *u.selected.borrow_mut() = list.selected_row().map(|r| r.widget_name().to_string());
-        u.showing_detail.set(u.selected.borrow().is_some());
+        let picked: Vec<String> = list.selected_rows().iter().map(|r| r.widget_name().to_string()).collect();
+        if picked.len() > 1 {
+            *u.selected.borrow_mut() = None;
+            *u.multi.borrow_mut() = picked;
+        } else {
+            *u.selected.borrow_mut() = picked.into_iter().next();
+            u.multi.borrow_mut().clear();
+        }
+        u.showing_detail.set(u.selected.borrow().is_some() || !u.multi.borrow().is_empty());
         detail::show(&u);
         layout(&u);
     });
@@ -363,11 +394,57 @@ fn watch_state(ui: &Ui) {
                 // A browser asking to pair shows here, while the vault is open.
                 if *ui.state.borrow() == state::UNLOCKED {
                     super::pairing::check(&ui);
+                    super::account::check_sign_in_requests(&ui);
+                    // A sync brought changes from elsewhere: list again (not under the editor).
+                    if let Ok(v) = client::call("Revision", None).await
+                        && let Some((revision,)) = v.get::<(u64,)>()
+                        && ui.revision.get() != revision
+                        && ui.editor.borrow().is_none()
+                    {
+                        ui.revision.set(revision);
+                        reload(&ui);
+                    }
+                    if !ui.update_bar.is_visible() {
+                        let outdated = match client::call("Outdated", None).await {
+                            Ok(v) => v.get::<(bool,)>().is_some_and(|(o,)| o),
+                            Err(e) => e.unknown_method,
+                        };
+                        if outdated {
+                            show_update_bar(&ui);
+                        }
+                    }
                 }
             });
         }
         glib::ControlFlow::Continue
     });
+}
+
+/// Passwords was updated while the vault was open; restarting its daemon locks it.
+fn show_update_bar(ui: &Ui) {
+    clear(&ui.update_bar);
+    let bar = w::banner("Passwords was updated. Restart it to finish; the vault locks.", false);
+    let restart = gtk::Button::with_label("Restart");
+    restart.set_valign(gtk::Align::Center);
+    let u = ui.clone();
+    restart.connect_clicked(move |_| {
+        u.update_bar.set_visible(false);
+        let u = u.clone();
+        glib::spawn_future_local(async move {
+            // A daemon from before `Restart` existed is restarted through its unit.
+            if client::call("Restart", None).await.is_err_and(|e| e.unknown_method) {
+                let _ = std::process::Command::new("systemctl")
+                    .args(["--user", "restart", nyx_passwords_proto::SERVICE])
+                    .stdin(std::process::Stdio::null())
+                    .spawn();
+            }
+            glib::timeout_future(Duration::from_millis(1000)).await;
+            refresh_state(&u);
+        });
+    });
+    bar.append(&restart);
+    ui.update_bar.append(&bar);
+    ui.update_bar.set_visible(true);
 }
 
 pub fn set_state(ui: &Ui, st: &str) {
@@ -388,8 +465,10 @@ pub fn set_state(ui: &Ui, st: &str) {
     } else {
         // Nothing of the vault stays in the window once it's locked.
         *ui.listing.borrow_mut() = Listing::default();
+        super::icons::forget();
         *ui.security.borrow_mut() = security::Report::default();
         *ui.selected.borrow_mut() = None;
+        ui.multi.borrow_mut().clear();
         clear(&ui.details);
         clear(&ui.list);
         let editor = ui.editor.borrow_mut().take();
@@ -458,6 +537,7 @@ pub fn navigate(ui: &Ui, section: &str) {
     }
     *ui.section.borrow_mut() = section.to_string();
     *ui.selected.borrow_mut() = None;
+    ui.multi.borrow_mut().clear();
     ui.showing_detail.set(false);
     prefs::update(|p| p.last_section = section.to_string());
     refresh_list(ui);
@@ -481,6 +561,11 @@ pub fn refresh_list(ui: &Ui) {
     let entries = visible(ui);
     let selected = ui.selected.borrow().clone().filter(|id| entries.iter().any(|e| e.id == *id));
     *ui.selected.borrow_mut() = selected.clone();
+    ui.multi.borrow_mut().retain(|id| entries.iter().any(|e| e.id == *id));
+    if ui.multi.borrow().len() < 2 {
+        ui.multi.borrow_mut().clear();
+    }
+    let multi = ui.multi.borrow().clone();
     for e in &entries {
         let row = gtk::ListBoxRow::new();
         row.set_widget_name(&e.id);
@@ -491,6 +576,7 @@ pub fn refresh_list(ui: &Ui) {
         line.set_margin_end(14);
         let icon = gtk::Image::from_icon_name(data::kind_icon(&e.kind));
         icon.add_css_class("dim");
+        super::icons::show(&icon, e.host.as_deref(), 16);
         line.append(&icon);
         let text = w::vbox(2);
         text.set_hexpand(true);
@@ -514,7 +600,7 @@ pub fn refresh_list(ui: &Ui) {
         }
         row.set_child(Some(&line));
         ui.list.append(&row);
-        if selected.as_deref() == Some(e.id.as_str()) {
+        if selected.as_deref() == Some(e.id.as_str()) || multi.contains(&e.id) {
             ui.list.select_row(Some(&row));
         }
     }
@@ -605,28 +691,23 @@ pub fn nav(ui: &Ui) {
         .filter(|(id, _, _, n)| *n > 0 || id == "login")
         .collect();
     groups.push(("Types", kinds));
-    if !listing.folders.is_empty() {
-        let mut folders: Vec<_> = listing
-            .folders
-            .iter()
-            .map(|f| {
-                let id = f.id.clone();
-                (
-                    format!("folder:{}", f.id),
-                    f.name.clone(),
-                    "folder-symbolic".into(),
-                    live(&|e| e.folder.as_deref() == Some(&id)),
-                )
-            })
-            .collect();
+    let mut folders: Vec<_> = listing
+        .folders
+        .iter()
+        .map(|f| {
+            let id = f.id.clone();
+            (format!("folder:{}", f.id), f.name.clone(), "folder-symbolic".into(), live(&|e| e.folder.as_deref() == Some(&id)))
+        })
+        .collect();
+    if !folders.is_empty() {
         folders.push((
             "nofolder".into(),
             "No folder".into(),
             "folder-symbolic".into(),
             live(&|e| e.folder.is_none() && e.organization.is_none()),
         ));
-        groups.push(("Folders", folders));
     }
+    groups.push(("Folders", folders));
     if !listing.collections.is_empty() {
         let cols = listing
             .collections
@@ -668,8 +749,19 @@ pub fn nav(ui: &Ui) {
                 b.add_css_class("active");
                 title = Some(name.clone());
             }
+            if let Some(folder) = id.strip_prefix("folder:") {
+                folder_menu(ui, &b, folder, &name);
+                b.set_tooltip_text(Some(&format!("{name} · right-click to rename or delete")));
+            }
             let u = ui.clone();
             b.connect_clicked(move |_| navigate(&u, &id));
+            ui.nav.append(&b);
+        }
+        if group == "Folders" {
+            let b = nav_button("list-add-symbolic", "New folder", "New folder");
+            b.add_css_class("dim");
+            let u = ui.clone();
+            b.connect_clicked(move |_| new_folder(&u));
             ui.nav.append(&b);
         }
     }
@@ -682,6 +774,104 @@ pub fn nav(ui: &Ui) {
         }
     }
     compact_sidebar(ui);
+}
+
+fn new_folder(ui: &Ui) {
+    let u = ui.clone();
+    w::ask_text("New folder", "", "", "Create", move |name| {
+        let u = u.clone();
+        glib::spawn_future_local(async move {
+            match client::text("CreateFolder", Some((name.as_str(),).to_variant())).await {
+                Ok(id) => {
+                    *u.section.borrow_mut() = format!("folder:{id}");
+                    reload(&u);
+                }
+                Err(e) => toast(&u, &e.to_string()),
+            }
+        });
+    });
+}
+
+/// Right-clicking a folder in the sidebar: rename or delete it.
+fn folder_menu(ui: &Ui, button: &gtk::Button, id: &str, name: &str) {
+    let click = gtk::GestureClick::new();
+    click.set_button(gdk::BUTTON_SECONDARY);
+    let (u, b, id, name) = (ui.clone(), button.clone(), id.to_string(), name.to_string());
+    click.connect_pressed(move |_, _, _, _| {
+        let menu = gtk::Popover::new();
+        let items = w::vbox(2);
+        let rename = gtk::Button::with_label("Rename…");
+        let delete = gtk::Button::with_label("Delete folder…");
+        for item in [&rename, &delete] {
+            item.add_css_class("flat");
+            items.append(item);
+        }
+        menu.set_child(Some(&items));
+        menu.set_parent(&b);
+        // Unparented once closed, so the sidebar can be rebuilt without leftovers.
+        menu.connect_closed(|m| {
+            let m = m.clone();
+            glib::idle_add_local_once(move || m.unparent());
+        });
+        let (u2, id2, name2, m) = (u.clone(), id.clone(), name.clone(), menu.clone());
+        rename.connect_clicked(move |_| {
+            m.popdown();
+            rename_folder(&u2, &id2, &name2);
+        });
+        let (u2, id2, name2, m) = (u.clone(), id.clone(), name.clone(), menu.clone());
+        delete.connect_clicked(move |_| {
+            m.popdown();
+            delete_folder(&u2, &id2, &name2);
+        });
+        menu.popup();
+    });
+    button.add_controller(click);
+}
+
+fn rename_folder(ui: &Ui, id: &str, name: &str) {
+    let (u, id) = (ui.clone(), id.to_string());
+    w::ask_text("Rename folder", "", name, "Rename", move |name| {
+        let (u, id) = (u.clone(), id.clone());
+        glib::spawn_future_local(async move {
+            match client::call("RenameFolder", Some((id.as_str(), name.as_str()).to_variant())).await {
+                Ok(_) => reload(&u),
+                Err(e) => toast(&u, &e.to_string()),
+            }
+        });
+    });
+}
+
+fn delete_folder(ui: &Ui, id: &str, name: &str) {
+    let (ui, id, name) = (ui.clone(), id.to_string(), name.to_string());
+    glib::spawn_future_local(async move {
+        let asked = format!("Delete the folder “{name}”?");
+        if !confirm(&ui, &asked, "Its items stay in the vault, in no folder.", "Delete").await {
+            return;
+        }
+        match client::call("DeleteFolder", Some((id.as_str(),).to_variant())).await {
+            Ok(_) => {
+                if *ui.section.borrow() == format!("folder:{id}") {
+                    *ui.section.borrow_mut() = "all".into();
+                }
+                reload(&ui);
+                toast(&ui, "Folder deleted.");
+            }
+            Err(e) => toast(&ui, &e.to_string()),
+        }
+    });
+}
+
+/// Asks before something that can't be undone; Cancel is the default.
+pub async fn confirm(ui: &Ui, message: &str, detail: &str, action: &str) -> bool {
+    let ask = gtk::AlertDialog::builder()
+        .modal(true)
+        .message(message)
+        .detail(detail)
+        .buttons(["Cancel", action])
+        .cancel_button(0)
+        .default_button(0)
+        .build();
+    ask.choose_future(Some(&ui.window)).await == Ok(1)
 }
 
 const SEARCH_WIDE: i32 = 28;
@@ -698,6 +888,8 @@ pub fn layout(ui: &Ui) {
     let empty = visible(ui).is_empty();
     let open = *ui.state.borrow() == state::UNLOCKED;
     ui.security_bar.set_visible(open && *ui.section.borrow() == "security");
+    let trashed = ui.listing.borrow().entries.iter().any(|e| e.deleted);
+    ui.trash_bar.set_visible(open && *ui.section.borrow() == "trash" && trashed);
     ui.new_button.set_visible(open && *ui.section.borrow() != "trash");
     ui.list_scroll.set_hexpand(narrow || empty);
     ui.list_scroll.set_visible(empty || !narrow || !ui.showing_detail.get());
@@ -753,6 +945,7 @@ fn install_icons() {
     for (name, svg) in [
         ("nyx-card-symbolic.svg", include_str!("../../data/icons/nyx-card-symbolic.svg")),
         ("nyx-key-symbolic.svg", include_str!("../../data/icons/nyx-key-symbolic.svg")),
+        ("nyx-duplicate-symbolic.svg", include_str!("../../data/icons/nyx-duplicate-symbolic.svg")),
     ] {
         let _ = std::fs::write(dir.join(name), svg);
     }

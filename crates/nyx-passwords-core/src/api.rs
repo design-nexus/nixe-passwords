@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::crypto::{CryptoError, Kdf};
-use crate::model::{Cipher, Sync};
+use crate::model::{Cipher, Folder, Sync};
 use crate::secret::Secret;
 
 /// Linux desktop, in Bitwarden's device-type list.
@@ -24,6 +24,8 @@ const MAX_BODY: usize = 64 << 20;
 /// is a few dozen bytes more). Files are held in memory while they're encrypted.
 pub const MAX_ATTACHMENT: usize = 100 << 20;
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(600);
+/// The largest site icon taken from the icon service.
+const ICON_MAX: usize = 512 << 10;
 const MAX_ERROR_TEXT: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,11 +132,15 @@ impl TwoFactor {
         }
     }
 
-    /// Whether this client can complete it (a typed code).
+    /// Whether this client can complete it (a typed code, or a YubiKey's typed OTP).
     pub fn supported(&self) -> bool {
-        matches!(self, TwoFactor::Authenticator | TwoFactor::Email { .. })
+        matches!(self, TwoFactor::Authenticator | TwoFactor::Email { .. } | TwoFactor::YubiKey)
     }
 }
+
+/// The two-step method number for answering with the account's recovery code: it
+/// signs in once and turns two-step login off.
+pub const RECOVERY_CODE: u8 = 8;
 
 /// A two-step login answer for a retried token request.
 pub struct TwoFactorAnswer {
@@ -179,6 +185,7 @@ pub enum Login {
 pub struct Server {
     base: String,
     http: reqwest::Client,
+    extra_roots: Vec<Vec<u8>>,
 }
 
 impl fmt::Debug for Server {
@@ -205,11 +212,16 @@ impl Server {
             .user_agent(concat!("nyx-passwords/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|_| ApiError::Protocol)?;
-        Ok(Server { base, http })
+        Ok(Server { base, http, extra_roots: extra_roots.to_vec() })
     }
 
     pub fn url(&self) -> &str {
         &self.base
+    }
+
+    /// The extra certificate authorities (PEM) the server was set up with.
+    pub(crate) fn extra_roots(&self) -> &[Vec<u8>] {
+        &self.extra_roots
     }
 
     pub async fn prelogin(&self, email: &str) -> Result<Kdf> {
@@ -256,8 +268,16 @@ impl Server {
         Err(login_error(status, &body, answer.is_some()))
     }
 
-    /// Exchanges a refresh token for new tokens.
+    /// Exchanges a refresh token for new tokens (or, after an API key login, signs in
+    /// with the key again).
     pub async fn refresh(&self, refresh: &Secret) -> Result<Tokens> {
+        if let Some((client_id, secret, device)) = parse_api_key_refresh(refresh) {
+            let device = Device { id: device, name: String::new() };
+            return self.login_api_key(&client_id, &secret, &device).await.map_err(|e| match e {
+                ApiError::Credentials => ApiError::Unauthorized,
+                e => e,
+            });
+        }
         let form = [("grant_type", "refresh_token"), ("client_id", CLIENT_ID), ("refresh_token", refresh.expose())];
         let resp = self.send(self.http.post(self.at("/identity/connect/token")).form(&form)).await?;
         if resp.status().is_success() {
@@ -275,6 +295,105 @@ impl Server {
         }
     }
 
+    /// Asks another signed-in device to approve signing in here: the request carries this
+    /// device's public key and a code only it knows. Returns the request's id.
+    pub async fn create_auth_request(&self, email: &str, public: &str, device: &Device, access_code: &Secret) -> Result<String> {
+        let body = json!({
+            "email": email, "publicKey": public, "deviceIdentifier": device.id.to_string(),
+            "accessCode": access_code.expose(), "type": 0,
+        });
+        let req = self.http.post(self.at("/api/auth-requests")).header("Device-Type", DEVICE_TYPE).json(&body);
+        let made = expect_ok(self.send(req).await?).await?;
+        field(&made, "id").as_str().map(str::to_string).ok_or(ApiError::Protocol)
+    }
+
+    /// The answer to a request this device made: `None` while no device has answered,
+    /// `Some(None)` when one declined, `Some(Some(key))` with the user key for this
+    /// device's public key once one approved.
+    pub async fn auth_request_answer(&self, id: &str, access_code: &Secret) -> Result<Option<Option<String>>> {
+        let url = format!("/api/auth-requests/{id}/response?code={}", url_escape(access_code.expose()));
+        let req = self.http.get(self.at(&url)).header("Device-Type", DEVICE_TYPE);
+        let resp = self.send(req).await?;
+        // Vaultwarden deletes a request when it's declined or expires.
+        if matches!(resp.status().as_u16(), 400 | 404) {
+            return Ok(Some(None));
+        }
+        let v = expect_ok(resp).await?;
+        Ok(match field(&v, "requestApproved").as_bool() {
+            None => None,
+            Some(false) => Some(None),
+            Some(true) => Some(Some(field(&v, "key").as_str().ok_or(ApiError::Protocol)?.to_string())),
+        })
+    }
+
+    /// Signs in with an approved request: its access code stands in for the password.
+    pub async fn login_with_auth_request(&self, email: &str, id: &str, access_code: &Secret, device: &Device) -> Result<Tokens> {
+        let device_id = device.id.to_string();
+        let form = [
+            ("grant_type", "password"),
+            ("username", email),
+            ("password", access_code.expose()),
+            ("authRequest", id),
+            ("scope", "api offline_access"),
+            ("client_id", CLIENT_ID),
+            ("deviceType", DEVICE_TYPE),
+            ("deviceName", &device.name),
+            ("deviceIdentifier", &device_id),
+        ];
+        let resp = self.send(self.http.post(self.at("/identity/connect/token")).form(&form)).await?;
+        if resp.status().is_success() {
+            return tokens_of(&read_json(resp).await?);
+        }
+        let status = resp.status().as_u16();
+        Err(login_error(status, &read_json_any(resp).await, false))
+    }
+
+    /// Requests from other devices to sign in with this account, still unanswered:
+    /// `[{id, publicKey, requestDeviceType, requestIpAddress, creationDate}]`.
+    pub async fn pending_auth_requests(&self, access: &Secret) -> Result<Vec<Value>> {
+        let req = self.http.get(self.at("/api/auth-requests")).bearer_auth(access.expose());
+        let v = expect_ok(self.send(req).await?).await?;
+        Ok(field(&v, "data")
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|r| field(r, "requestApproved").is_null() && field(r, "responseDate").is_null())
+            .cloned()
+            .collect())
+    }
+
+    /// Approves (with the user key for the requester's public key) or declines a request.
+    pub async fn answer_auth_request(&self, access: &Secret, id: &str, key: Option<&str>, device: Uuid) -> Result<()> {
+        // Vaultwarden wants a key even with a refusal.
+        let body = json!({"key": key.unwrap_or_default(), "masterPasswordHash": null, "deviceIdentifier": device.to_string(), "requestApproved": key.is_some()});
+        let req = self.http.put(self.at(&format!("/api/auth-requests/{id}"))).bearer_auth(access.expose()).json(&body);
+        expect_ok(self.send(req).await?).await.map(|_| ())
+    }
+
+    /// Signs in with the account's API key (`user.<id>` and its secret) instead of the
+    /// master password; two-step login and new-device checks don't apply. There's no
+    /// refresh token: the key itself gets new tokens (`refresh` with `api_key_refresh`).
+    pub async fn login_api_key(&self, client_id: &str, secret: &Secret, device: &Device) -> Result<Tokens> {
+        let device_id = device.id.to_string();
+        let form = [
+            ("grant_type", "client_credentials"),
+            ("scope", "api"),
+            ("client_id", client_id),
+            ("client_secret", secret.expose()),
+            ("deviceType", DEVICE_TYPE),
+            ("deviceName", &device.name),
+            ("deviceIdentifier", &device_id),
+        ];
+        let resp = self.send(self.http.post(self.at("/identity/connect/token")).form(&form)).await?;
+        if resp.status().is_success() {
+            let mut tokens = tokens_of(&read_json(resp).await?)?;
+            tokens.refresh = api_key_refresh(client_id, secret, device.id);
+            return Ok(tokens);
+        }
+        let status = resp.status().as_u16();
+        Err(login_error(status, &read_json_any(resp).await, false))
+    }
+
     /// Asks the server to mail a two-step login code.
     pub async fn send_email_code(&self, email: &str, hash: &Secret) -> Result<()> {
         let body = json!({"email": email, "masterPasswordHash": hash.expose()});
@@ -285,7 +404,7 @@ impl Server {
     pub async fn sync(&self, access: &Secret) -> Result<Sync> {
         let req = self
             .http
-            .get(self.at("/api/sync?excludeDomains=true"))
+            .get(self.at("/api/sync?excludeDomains=false"))
             .bearer_auth(access.expose())
             .timeout(Duration::from_secs(180));
         let body = expect_ok(self.send(req).await?).await?;
@@ -406,6 +525,84 @@ impl Server {
         serde_json::from_value(value).map_err(|_| ApiError::Protocol)
     }
 
+    /// Deletes items for good. Vaultwarden takes them only from the trash here (the
+    /// caller checks), and drops their attachments with them.
+    pub async fn delete_ciphers(&self, access: &Secret, ids: &[Uuid]) -> Result<()> {
+        let req = self.http.delete(self.at("/api/ciphers")).bearer_auth(access.expose()).json(&json!({"ids": ids}));
+        expect_ok(self.send(req).await?).await.map(|_| ())
+    }
+
+    /// Moves items to the trash in one request.
+    pub async fn trash_ciphers(&self, access: &Secret, ids: &[Uuid]) -> Result<()> {
+        let req = self.http.put(self.at("/api/ciphers/delete")).bearer_auth(access.expose()).json(&json!({"ids": ids}));
+        expect_ok(self.send(req).await?).await.map(|_| ())
+    }
+
+    pub async fn restore_ciphers(&self, access: &Secret, ids: &[Uuid]) -> Result<()> {
+        let req = self.http.put(self.at("/api/ciphers/restore")).bearer_auth(access.expose()).json(&json!({"ids": ids}));
+        expect_ok(self.send(req).await?).await.map(|_| ())
+    }
+
+    /// Puts items in a folder (`None`: no folder). Folders are the account's own, so this
+    /// works on organization items too.
+    pub async fn move_ciphers(&self, access: &Secret, ids: &[Uuid], folder: Option<Uuid>) -> Result<()> {
+        let body = json!({"ids": ids, "folderId": folder});
+        let req = self.http.put(self.at("/api/ciphers/move")).bearer_auth(access.expose()).json(&body);
+        expect_ok(self.send(req).await?).await.map(|_| ())
+    }
+
+    /// Imports items and folders in one request (`transfer::import_request`).
+    pub async fn import_ciphers(&self, access: &Secret, body: &Value) -> Result<()> {
+        let req =
+            self.http.post(self.at("/api/ciphers/import")).bearer_auth(access.expose()).json(body).timeout(ATTACHMENT_TIMEOUT);
+        expect_ok(self.send(req).await?).await.map(|_| ())
+    }
+
+    /// Creates a folder; `name` is encrypted with the user key.
+    pub async fn create_folder(&self, access: &Secret, name: &str) -> Result<Folder> {
+        let req = self.http.post(self.at("/api/folders")).bearer_auth(access.expose()).json(&json!({"name": name}));
+        let value = expect_ok(self.send(req).await?).await?;
+        serde_json::from_value(value).map_err(|_| ApiError::Protocol)
+    }
+
+    pub async fn rename_folder(&self, access: &Secret, id: Uuid, name: &str) -> Result<Folder> {
+        let req = self.http.put(self.at(&format!("/api/folders/{id}"))).bearer_auth(access.expose()).json(&json!({"name": name}));
+        let value = expect_ok(self.send(req).await?).await?;
+        serde_json::from_value(value).map_err(|_| ApiError::Protocol)
+    }
+
+    /// Deletes a folder; its items stay, in no folder.
+    pub async fn delete_folder(&self, access: &Secret, id: Uuid) -> Result<()> {
+        let req = self.http.delete(self.at(&format!("/api/folders/{id}"))).bearer_auth(access.expose());
+        expect_ok(self.send(req).await?).await.map(|_| ())
+    }
+
+    /// A site's icon from the server's icon service, which fetches it from the site.
+    /// Vaultwarden answers a site without one with a generic icon.
+    pub async fn icon(&self, host: &str) -> Result<Vec<u8>> {
+        let req = self.http.get(self.at(&format!("/icons/{host}/icon.png"))).timeout(Duration::from_secs(20));
+        let resp = self.send(req).await?;
+        let status = resp.status().as_u16();
+        let image = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|t| t.starts_with("image/"));
+        if status != 200 || !image {
+            return Err(status_error(status, &Value::Null));
+        }
+        read_capped(resp, ICON_MAX).await
+    }
+
+    /// A plain authenticated call with an optional JSON body; the JSON answer (or null).
+    pub(crate) async fn call(&self, access: &Secret, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Value> {
+        let mut req = self.http.request(method, self.at(path)).bearer_auth(access.expose());
+        if let Some(body) = body {
+            req = req.json(&body);
+        }
+        expect_ok(self.send(req).await?).await
+    }
+
     fn at(&self, path: &str) -> String {
         format!("{}{path}", self.base)
     }
@@ -414,6 +611,27 @@ impl Server {
     async fn send(&self, req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
         req.send().await.map_err(transport_error)
     }
+}
+
+/// After an API key login, what's kept in place of a refresh token: the key, and the
+/// device it signs in as.
+const API_KEY_PREFIX: &str = "apikey|";
+
+fn api_key_refresh(client_id: &str, secret: &Secret, device: Uuid) -> Secret {
+    Secret::new(format!("{API_KEY_PREFIX}{device}|{client_id}|{}", secret.expose()))
+}
+
+fn parse_api_key_refresh(refresh: &Secret) -> Option<(String, Secret, Uuid)> {
+    let rest = refresh.expose().strip_prefix(API_KEY_PREFIX)?;
+    let mut parts = rest.splitn(3, '|');
+    let device = parts.next()?.parse().ok()?;
+    let client_id = parts.next()?.to_string();
+    Some((client_id, Secret::new(parts.next()?), device))
+}
+
+/// Percent-encodes a query value.
+fn url_escape(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 /// Checks and tidies a server address: https (http only on loopback), no user name,

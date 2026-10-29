@@ -57,6 +57,39 @@ pub struct View {
     pub collections: Vec<Named>,
     /// Organization names come unencrypted from the server.
     pub organizations: Vec<(Uuid, String)>,
+    /// Base domains that count as one site (`matching::matches_in`).
+    pub equivalents: Vec<Vec<String>>,
+}
+
+/// The account's equivalent domains and the server's global ones it hasn't turned
+/// off, as groups of lowercase base domains. Not secret: the server sends them in the
+/// clear.
+fn equivalents(sync: &Sync) -> Vec<Vec<String>> {
+    let get = |v: &serde_json::Value, key: &str| {
+        let pascal = format!("{}{}", key[..1].to_ascii_uppercase(), &key[1..]);
+        v.get(key).or_else(|| v.get(&pascal)).cloned().unwrap_or_default()
+    };
+    let names = |list: &serde_json::Value| -> Vec<String> {
+        let mut group: Vec<String> = list
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|d| d.as_str())
+            .map(|d| crate::matching::base_domain(d.trim()))
+            .filter(|d| !d.is_empty())
+            .collect();
+        group.dedup();
+        group
+    };
+    let Some(domains) = sync.extra.get("domains").or_else(|| sync.extra.get("Domains")) else { return Vec::new() };
+    let mut groups: Vec<Vec<String>> = get(domains, "equivalentDomains").as_array().into_iter().flatten().map(names).collect();
+    for global in get(domains, "globalEquivalentDomains").as_array().into_iter().flatten() {
+        if get(global, "excluded") != serde_json::Value::Bool(true) {
+            groups.push(names(&get(global, "domains")));
+        }
+    }
+    groups.retain(|g| g.len() > 1);
+    groups
 }
 
 /// A secret field of one item.
@@ -73,6 +106,8 @@ pub enum Field {
     Custom(usize),
     /// A field of a card, identity or SSH key (`card.number`, …; see `sub_field`).
     Sub(&'static Spec),
+    /// The n-th old password, newest first.
+    History(usize),
 }
 
 pub use nyx_passwords_proto::fields::{CARD, IDENTITY, SSH_KEY, Spec};
@@ -99,6 +134,8 @@ pub struct Shown {
     pub label: String,
     pub value: Option<Secret>,
     pub secret: bool,
+    /// A custom field's type (0 text, 1 hidden, 2 true or false); 0 for the others.
+    pub kind: i64,
 }
 
 fn section<'a>(c: &'a Cipher, name: &str) -> Option<&'a serde_json::Value> {
@@ -120,7 +157,7 @@ pub fn fields(keys: &Keys, sync: &Sync, id: Uuid) -> Result<Vec<Shown>, RevealEr
         let stored = section(c, spec.section).and_then(|v| v[spec.key].as_str()).filter(|v| !v.is_empty());
         let Some(stored) = stored else { continue };
         let value = if spec.secret { None } else { Some(key.decrypt(stored).map_err(RevealError::Crypto)?) };
-        out.push(Shown { name: spec.name.into(), label: spec.label.into(), value, secret: spec.secret });
+        out.push(Shown { name: spec.name.into(), label: spec.label.into(), value, secret: spec.secret, kind: 0 });
     }
     for (i, f) in c.fields.iter().flatten().enumerate() {
         // Linked fields (3) point at another field and hold no value of their own.
@@ -131,7 +168,7 @@ pub fn fields(keys: &Keys, sync: &Sync, id: Uuid) -> Result<Vec<Shown>, RevealEr
         let label = label.map(|l| l.expose().to_string()).filter(|l| !l.is_empty()).unwrap_or_else(|| format!("Field {}", i + 1));
         let secret = f.kind == 1;
         let value = if secret { None } else { key.decrypt_opt(f.value.as_deref()).map_err(RevealError::Crypto)? };
-        out.push(Shown { name: format!("custom:{i}"), label, value, secret });
+        out.push(Shown { name: format!("custom:{i}"), label, value, secret, kind: f.kind });
     }
     Ok(out)
 }
@@ -165,6 +202,7 @@ impl View {
     pub fn build(keys: &Keys, sync: &Sync) -> View {
         let mut view = View {
             organizations: sync.profile.organizations.iter().map(|o| (o.id, o.name.clone().unwrap_or_default())).collect(),
+            equivalents: equivalents(sync),
             ..View::default()
         };
         for f in &sync.folders {
@@ -172,12 +210,22 @@ impl View {
                 view.folders.push(Named { id: f.id, organization: None, name, writable: true });
             }
         }
+        view.folders.sort_by_cached_key(|f| f.name.expose().to_lowercase());
         for c in &sync.collections {
             if let Ok(name) = keys.item(Some(c.organization_id), None).and_then(|mut k| k.decrypt(&c.name)) {
                 view.collections.push(Named { id: c.id, organization: Some(c.organization_id), name, writable: c.writable() });
             }
         }
         view.entries = sync.ciphers.iter().map(|c| entry(keys, c)).collect();
+        view.sort();
+        view
+    }
+
+    /// A listing of some items alone (a grantor's, for emergency access): no folders,
+    /// collections or organizations.
+    pub fn of_ciphers(keys: &Keys, ciphers: &[Cipher]) -> View {
+        let mut view =
+            View { entries: ciphers.iter().filter(|c| !c.is_deleted()).map(|c| entry(keys, c)).collect(), ..View::default() };
         view.sort();
         view
     }
@@ -192,6 +240,19 @@ impl View {
     /// Drops one item: the server no longer gives it to this account.
     pub fn remove(&mut self, id: Uuid) {
         self.entries.retain(|e| e.id != id);
+    }
+
+    /// Replaces (or adds) one folder after an edit.
+    pub fn put_folder(&mut self, keys: &Keys, folder: &crate::model::Folder) {
+        self.folders.retain(|f| f.id != folder.id);
+        if let Ok(name) = keys.item(None, None).and_then(|mut k| k.decrypt(&folder.name)) {
+            self.folders.push(Named { id: folder.id, organization: None, name, writable: true });
+        }
+        self.folders.sort_by_cached_key(|f| f.name.expose().to_lowercase());
+    }
+
+    pub fn remove_folder(&mut self, id: Uuid) {
+        self.folders.retain(|f| f.id != id);
     }
 
     pub fn get(&self, id: Uuid) -> Option<&Entry> {
@@ -229,7 +290,9 @@ impl View {
             .entries
             .iter()
             .filter(|e| !e.deleted && e.readable && e.kind == Kind::Login)
-            .filter(|e| e.uris.iter().zip(&e.uri_rules).any(|(u, r)| crate::matching::matches(*r, u.expose(), page)))
+            .filter(|e| {
+                e.uris.iter().zip(&e.uri_rules).any(|(u, r)| crate::matching::matches_in(*r, u.expose(), page, &self.equivalents))
+            })
             .collect();
         hits.sort_by_key(|e| !e.favorite);
         hits
@@ -280,7 +343,7 @@ pub fn reveal(keys: &Keys, sync: &Sync, id: Uuid, field: Field) -> Result<Secret
 /// Whether hiding passwords covers this field of this item.
 fn hides(c: &Cipher, field: Field) -> bool {
     match field {
-        Field::Password | Field::TotpSeed => true,
+        Field::Password | Field::TotpSeed | Field::History(_) => true,
         Field::Custom(n) => c.fields.as_ref().and_then(|f| f.get(n)).is_some_and(|f| f.kind == 1),
         Field::Sub(spec) => spec.secret,
         _ => false,
@@ -290,7 +353,12 @@ fn hides(c: &Cipher, field: Field) -> bool {
 /// Decrypts one field for the daemon's own use, never shown: filling a page (official
 /// clients fill hidden passwords too) or carrying a field through an edit.
 pub fn reveal_for_use(keys: &Keys, sync: &Sync, id: Uuid, field: Field) -> Result<Secret, RevealError> {
-    let c = sync.ciphers.iter().find(|c| c.id == id).ok_or(RevealError::NotFound)?;
+    reveal_in(keys, &sync.ciphers, id, field)
+}
+
+/// As `reveal_for_use`, among some items alone (a grantor's, for emergency access).
+pub fn reveal_in(keys: &Keys, ciphers: &[Cipher], id: Uuid, field: Field) -> Result<Secret, RevealError> {
+    let c = ciphers.iter().find(|c| c.id == id).ok_or(RevealError::NotFound)?;
     let mut key = keys.item(c.organization_id, c.key.as_deref()).map_err(RevealError::Crypto)?;
     let login = c.login.as_ref();
     let value = match field {
@@ -300,6 +368,7 @@ pub fn reveal_for_use(keys: &Keys, sync: &Sync, id: Uuid, field: Field) -> Resul
         Field::Notes => c.notes.as_deref(),
         Field::Custom(n) => c.fields.as_ref().and_then(|f| f.get(n)).and_then(|f| f.value.as_deref()),
         Field::Sub(spec) => section(c, spec.section).and_then(|v| v[spec.key].as_str()),
+        Field::History(n) => history_list(c).get(n).and_then(|h| h["password"].as_str()),
     };
     let plain = key.decrypt_opt(value).map_err(RevealError::Crypto)?.ok_or(RevealError::Empty)?;
     if field == Field::Totp {
@@ -307,6 +376,27 @@ pub fn reveal_for_use(keys: &Keys, sync: &Sync, id: Uuid, field: Field) -> Resul
         return Ok(generator.now().code);
     }
     Ok(plain)
+}
+
+fn history_list(c: &Cipher) -> &[serde_json::Value] {
+    c.extra.get("passwordHistory").and_then(serde_json::Value::as_array).map_or(&[], Vec::as_slice)
+}
+
+/// When each old password was last used (as the server sent it, ISO 8601), newest
+/// first; `reveal` the n-th with `Field::History(n)`. The organization's rule for hiding
+/// passwords covers these too.
+pub fn history(sync: &Sync, id: Uuid) -> Result<Vec<String>, RevealError> {
+    let c = sync.ciphers.iter().find(|c| c.id == id).ok_or(RevealError::NotFound)?;
+    if !c.can_view_password() {
+        return Err(RevealError::Hidden);
+    }
+    Ok(history_list(c).iter().map(|h| h["lastUsedDate"].as_str().unwrap_or_default().to_string()).collect())
+}
+
+/// The item's current one-time code, with its period and the seconds it has left.
+pub fn current_code(keys: &Keys, sync: &Sync, id: Uuid) -> Result<totp::Code, RevealError> {
+    let seed = reveal_for_use(keys, sync, id, Field::TotpSeed)?;
+    totp::Generator::parse(&seed).map(|g| g.now()).map_err(|_| RevealError::BadTotp)
 }
 
 /// The host of a web address as Bitwarden clients read it: a missing scheme means https.

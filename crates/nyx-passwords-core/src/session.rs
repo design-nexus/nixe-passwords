@@ -7,10 +7,8 @@
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use uuid::Uuid;
-
 use crate::api::{self, ApiError, Device, Login, Server, Tokens, TwoFactor, TwoFactorAnswer};
-use crate::crypto::{CryptoError, Kdf, Keys, MasterKey};
+use crate::crypto::{CryptoError, DeviceRequest, Kdf, Keys, MasterKey, fingerprint_phrase};
 use crate::model::Sync;
 use crate::secret::Secret;
 use crate::ssh::SshError;
@@ -114,7 +112,7 @@ pub async fn sign_in(
     {
         return Err(SessionError::KdfDowngrade);
     }
-    let device = Device { id: previous.as_ref().map_or_else(Uuid::new_v4, |a| a.device_id), name: device_name.to_string() };
+    let device = Device { id: store.device_id()?, name: device_name.to_string() };
 
     let master = derive(password, &email, kdf).await?;
     let hash = master.server_hash(password);
@@ -125,8 +123,24 @@ pub async fn sign_in(
     let sync = server.sync(&tokens.access).await?;
     let kdf = checked_kdf(&sync, kdf)?;
     let keys = open(&master, &sync)?;
+    finish(store, server, email, kdf, &device, previous.is_some(), tokens, sync, keys).map(|s| SignIn::Done(Box::new(s)))
+}
 
-    if previous.is_none() {
+/// After signing in by any route: keeps the account and the snapshot (replacing what an
+/// earlier account left), and opens the session.
+#[allow(clippy::too_many_arguments)]
+fn finish(
+    store: &mut Store,
+    server: &Server,
+    email: String,
+    kdf: Kdf,
+    device: &Device,
+    same_account: bool,
+    tokens: Tokens,
+    sync: Sync,
+    keys: Keys,
+) -> Result<Session> {
+    if !same_account {
         store.clear()?;
     }
     let account = Account {
@@ -141,7 +155,98 @@ pub async fn sign_in(
     store.replace_snapshot(&sync, kdf, now())?;
     let account = store.account()?.ok_or(SessionError::SignedOut)?;
     let view = View::build(&keys, &sync);
-    Ok(SignIn::Done(Box::new(Session { account, keys, snapshot: sync, view, tokens: Some(tokens) })))
+    Ok(Session { account, keys, snapshot: sync, view, tokens: Some(tokens) })
+}
+
+/// The account this device held before, if it's this one, and the device id to sign in as.
+fn device_for(store: &Store, server: &Server, email: Option<&str>, name: &str) -> Result<(Option<Account>, Device)> {
+    let previous = store.account()?.filter(|a| a.server == server.url() && email.is_none_or(|e| a.email.eq_ignore_ascii_case(e)));
+    let device = Device { id: store.device_id()?, name: name.to_string() };
+    Ok((previous, device))
+}
+
+/// Another device asking to sign in with this account.
+#[derive(Debug, Clone)]
+pub struct SignInRequest {
+    pub id: String,
+    pub device_type: String,
+    pub ip: String,
+    pub created: String,
+    /// The words the requesting device shows; they must match before approving.
+    pub fingerprint: String,
+}
+
+/// Signing in with another device's approval: this device made a request and waits.
+pub struct DeviceSignIn {
+    email: String,
+    kdf: Kdf,
+    same_account: bool,
+    device: Device,
+    request: DeviceRequest,
+    id: String,
+    access_code: Secret,
+    /// The words both devices show for this request.
+    pub fingerprint: String,
+}
+
+/// Asks the account's other signed-in devices to approve signing in here.
+pub async fn request_device_sign_in(store: &mut Store, server: &Server, email: &str, device_name: &str) -> Result<DeviceSignIn> {
+    let email = email.trim().to_string();
+    let kdf = server.prelogin(&email).await?;
+    let (previous, device) = device_for(store, server, Some(&email), device_name)?;
+    let (request, public) = DeviceRequest::new()?;
+    let access_code = Secret::new(crate::generate::access_code());
+    let id = server.create_auth_request(&email, &public, &device, &access_code).await?;
+    let fingerprint = fingerprint_phrase(&email, &public)?;
+    Ok(DeviceSignIn { email, kdf, same_account: previous.is_some(), device, request, id, access_code, fingerprint })
+}
+
+impl DeviceSignIn {
+    /// Checks for an answer: `None` while there's none, the session once approved.
+    /// Declined: `NotAllowed`.
+    pub async fn poll(&mut self, store: &mut Store, server: &Server) -> Result<Option<Session>> {
+        let key = match server.auth_request_answer(&self.id, &self.access_code).await? {
+            None => return Ok(None),
+            Some(None) => return Err(SessionError::NotAllowed("the request was declined, or it expired")),
+            Some(Some(key)) => key,
+        };
+        let tokens = server.login_with_auth_request(&self.email, &self.id, &self.access_code, &self.device).await?;
+        let sync = server.sync(&tokens.access).await?;
+        let kdf = checked_kdf(&sync, self.kdf)?;
+        let private = sync.profile.private_key.clone().ok_or(SessionError::KeysChanged)?;
+        let keys = self.request.open(&key, &private).map_err(|_| SessionError::KeysChanged)?;
+        add_organizations(&keys, &sync);
+        let session = finish(store, server, self.email.clone(), kdf, &self.device, self.same_account, tokens, sync, keys)?;
+        Ok(Some(session))
+    }
+}
+
+/// Signs in with the account's API key (from the web vault's account settings), then
+/// opens the vault with the master password. The key, not a refresh token, is what's
+/// kept for syncing later.
+pub async fn sign_in_with_api_key(
+    store: &mut Store,
+    server: &Server,
+    client_id: &str,
+    secret: &Secret,
+    password: &Secret,
+    device_name: &str,
+) -> Result<Session> {
+    let (_, device) = device_for(store, server, None, device_name)?;
+    let tokens = server.login_api_key(client_id.trim(), secret, &device).await?;
+    let sync = server.sync(&tokens.access).await?;
+    let email = sync.profile.email.clone();
+    let (previous, _) = device_for(store, server, Some(&email), device_name)?;
+    let kdf = server.prelogin(&email).await?;
+    if let Some(prev) = &previous
+        && !kdf.at_least(&prev.kdf)
+    {
+        return Err(SessionError::KdfDowngrade);
+    }
+    let kdf = checked_kdf(&sync, kdf)?;
+    let master = derive(password, &email, kdf).await?;
+    let keys = open(&master, &sync)?;
+    finish(store, server, email, kdf, &device, previous.is_some(), tokens, sync, keys)
 }
 
 /// Asks the server to mail a two-step login code (for `TwoFactor::Email`).
@@ -219,6 +324,46 @@ impl Session {
             self.tokens = Some(server.refresh(refresh).await?);
         }
         Ok(())
+    }
+
+    /// Other devices asking to sign in with this account, still unanswered.
+    pub async fn sign_in_requests(&mut self, server: &Server, refresh: &Secret) -> Result<Vec<SignInRequest>> {
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        let email = self.account.email.clone();
+        let mut out = Vec::new();
+        for r in server.pending_auth_requests(&access).await? {
+            let s = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let Ok(fingerprint) = fingerprint_phrase(&email, &s("publicKey")) else { continue };
+            out.push(SignInRequest {
+                id: s("id"),
+                device_type: r
+                    .get("requestDeviceType")
+                    .and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_i64().map(|n| n.to_string())))
+                    .unwrap_or_default(),
+                ip: s("requestIpAddress"),
+                created: s("creationDate"),
+                fingerprint,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Approves (sending the user key, encrypted for the requesting device) or declines a
+    /// request to sign in.
+    pub async fn answer_sign_in(&mut self, server: &Server, refresh: &Secret, id: &str, approve: bool) -> Result<()> {
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        let pending = server.pending_auth_requests(&access).await?;
+        let request = pending
+            .iter()
+            .find(|r| r.get("id").and_then(|v| v.as_str()) == Some(id))
+            .ok_or(SessionError::Api(ApiError::NotFound))?;
+        let key = if approve {
+            let public = request.get("publicKey").and_then(|v| v.as_str()).ok_or(SessionError::Api(ApiError::Protocol))?;
+            Some(self.keys.share_user_key(public)?)
+        } else {
+            None
+        };
+        Ok(server.answer_auth_request(&access, id, key.as_deref(), self.account.device_id).await?)
     }
 
     /// Checks the master password against this account's keys, without the network

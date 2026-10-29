@@ -10,8 +10,10 @@ use super::client;
 use super::prefs;
 use super::ui::{self, Ui, clear, label};
 
-/// Two-step methods this client completes: authenticator (0) and email (1).
-const SUPPORTED: [u8; 2] = [0, 1];
+/// Two-step methods this client completes: authenticator (0), email (1) and YubiKey
+/// OTP (3). A recovery code (8) answers any of them.
+const SUPPORTED: [u8; 3] = [0, 1, 3];
+const RECOVERY_CODE: u8 = 8;
 
 pub fn show(ui: &Ui, st: &str) {
     match st {
@@ -115,6 +117,29 @@ fn sign_in_page(ui: &Ui, error: Option<&str>) {
     let go = gtk::Button::with_label("Sign in");
     go.add_css_class("suggested-action");
     card.append(&buttons(&[&go]));
+    let others = w::hbox(8);
+    let device = gtk::Button::with_label("Sign in with another device");
+    let api_key = gtk::Button::with_label("Use an API key");
+    for b in [&device, &api_key] {
+        b.add_css_class("flat");
+        others.append(b);
+    }
+    card.append(&others);
+    let (u, s, e, er) = (ui.clone(), server.clone(), email.clone(), err.clone());
+    device.connect_clicked(move |_| {
+        let (server, email) = (s.text().trim().to_string(), e.text().trim().to_string());
+        if server.is_empty() || email.is_empty() {
+            show_error(&er, "Fill in the server and email first.");
+            return;
+        }
+        prefs::update(|p| {
+            p.last_server = server.clone();
+            p.last_email = email.clone();
+        });
+        device_page(&u, server, email);
+    });
+    let (u, s) = (ui.clone(), server.clone());
+    api_key.connect_clicked(move |_| api_key_page(&u, s.text().trim().to_string()));
 
     let submit = {
         let (ui, server, email, password, err, go) =
@@ -147,6 +172,111 @@ fn sign_in_page(ui: &Ui, error: Option<&str>) {
     } else {
         password.grab_focus();
     }
+}
+
+/// Signing in with another device's approval: the words to compare, while it waits.
+fn device_page(ui: &Ui, server: String, email: String) {
+    let card = page(ui, "Sign in with another device", "Asking your other devices…");
+    let err = error_label();
+    card.append(&err);
+    let back = gtk::Button::with_label("Cancel");
+    card.append(&buttons(&[&back]));
+    let waiting = std::rc::Rc::new(std::cell::Cell::new(true));
+    let (u, w2) = (ui.clone(), waiting.clone());
+    back.connect_clicked(move |_| {
+        w2.set(false);
+        let u = u.clone();
+        glib::spawn_future_local(async move {
+            let _ = client::call("CancelDeviceSignIn", None).await;
+            sign_in_page(&u, None);
+        });
+    });
+    let ui = ui.clone();
+    glib::spawn_future_local(async move {
+        let fingerprint = match client::text("RequestDeviceSignIn", Some((server.as_str(), email.as_str()).to_variant())).await {
+            Ok(f) => f,
+            Err(e) => return sign_in_page(&ui, Some(&e.to_string())),
+        };
+        let note = label(
+            "Approve the request on a device where you're signed in (the web vault, a Bitwarden app, or Passwords on another computer), if it shows these words:",
+            "dim",
+        );
+        let phrase = label(&fingerprint, "pairing-code");
+        phrase.set_selectable(true);
+        card.insert_child_after(&note, card.first_child().and_then(|c| c.next_sibling()).as_ref());
+        card.insert_child_after(&phrase, Some(&note));
+        while waiting.get() {
+            glib::timeout_future(std::time::Duration::from_secs(3)).await;
+            // Cancelled, or the page was replaced.
+            if !waiting.get() || card.root().is_none() {
+                return;
+            }
+            match client::call("PollDeviceSignIn", None).await.map(|v| v.get::<(bool,)>()) {
+                Ok(Some((true,))) => return ui::set_state(&ui, state::UNLOCKED),
+                Ok(_) => {}
+                Err(e) => return sign_in_page(&ui, Some(&e.to_string())),
+            }
+        }
+    });
+}
+
+/// Signing in with the account's API key, which skips two-step login and new-device
+/// checks; the master password still opens the vault.
+fn api_key_page(ui: &Ui, server_text: String) {
+    let card = page(
+        ui,
+        "Sign in with an API key",
+        "Find the key in the web vault: Settings → Security → Keys → View API key. Two-step login isn't asked for.",
+    );
+    let server = gtk::Entry::new();
+    server.set_text(&server_text);
+    server.set_placeholder_text(Some("https://vault.example.com"));
+    field(&card, "Server address", &server);
+    let client_id = gtk::Entry::new();
+    client_id.set_placeholder_text(Some("user.…"));
+    field(&card, "client_id", &client_id);
+    let secret = gtk::PasswordEntry::new();
+    secret.set_show_peek_icon(true);
+    field(&card, "client_secret", &secret);
+    let password = gtk::PasswordEntry::new();
+    password.set_show_peek_icon(true);
+    field(&card, "Master password", &password);
+    let err = error_label();
+    card.append(&err);
+    let back = gtk::Button::with_label("Back");
+    let go = gtk::Button::with_label("Sign in");
+    go.add_css_class("suggested-action");
+    card.append(&buttons(&[&back, &go]));
+    let u = ui.clone();
+    back.connect_clicked(move |_| sign_in_page(&u, None));
+    let submit = {
+        let (ui, err, go, password) = (ui.clone(), err.clone(), go.clone(), password.clone());
+        move || {
+            let fields = (server.text().trim().to_string(), client_id.text().trim().to_string(), secret.text().to_string());
+            let pw = password.text().to_string();
+            password.set_text("");
+            if fields.0.is_empty() || fields.1.is_empty() || fields.2.is_empty() || pw.is_empty() {
+                show_error(&err, "Fill in every field.");
+                return;
+            }
+            prefs::update(|p| p.last_server = fields.0.clone());
+            busy(&go, "Signing in…");
+            let (ui, err, go) = (ui.clone(), err.clone(), go.clone());
+            glib::spawn_future_local(async move {
+                let args = (fields.0.as_str(), fields.1.as_str(), fields.2.as_str(), pw.as_str());
+                let reply = client::call("SignInWithApiKey", Some(args.to_variant())).await;
+                go.set_sensitive(true);
+                go.set_label("Sign in");
+                match reply {
+                    Ok(_) => ui::set_state(&ui, state::UNLOCKED),
+                    Err(e) => show_error(&err, &e.to_string()),
+                }
+            });
+        }
+    };
+    let s = submit.clone();
+    go.connect_clicked(move |_| s());
+    password.connect_activate(move |_| submit());
 }
 
 fn busy(button: &gtk::Button, text: &str) {
@@ -217,8 +347,7 @@ fn two_step(ui: &Ui, pending: Pending) {
         field(&card, "Method", &chooser);
     }
     let code = gtk::Entry::new();
-    code.set_input_purpose(gtk::InputPurpose::Digits);
-    code.set_max_length(10);
+    code.set_max_length(64);
     field(&card, "Code", &code);
     let err = error_label();
     card.append(&err);
@@ -227,16 +356,39 @@ fn two_step(ui: &Ui, pending: Pending) {
     let go = gtk::Button::with_label("Continue");
     go.add_css_class("suggested-action");
     card.append(&buttons(&[&back, &send, &go]));
+    let recover = gtk::Button::with_label("Use a recovery code");
+    recover.add_css_class("flat");
+    recover.set_halign(gtk::Align::Start);
+    card.append(&recover);
     let chosen = {
         let usable = usable.clone();
         let chooser = chooser.clone();
         move || usable.get(chooser.selected() as usize).map(|(n, _)| *n).unwrap_or(0)
     };
     let c = chosen.clone();
-    let s = send.clone();
-    let update_send = move || s.set_visible(c() == 1);
+    let (s, entry) = (send.clone(), code.clone());
+    let update_send = move || {
+        s.set_visible(c() == 1);
+        let yubikey = c() == 3;
+        entry.set_placeholder_text(Some(if yubikey { "Touch your YubiKey" } else { "" }));
+        entry.set_input_purpose(if yubikey { gtk::InputPurpose::FreeForm } else { gtk::InputPurpose::Digits });
+    };
     update_send();
     chooser.connect_selected_notify(move |_| update_send());
+    let (u, p, g, e) = (ui.clone(), pending.clone(), go.clone(), err.clone());
+    recover.connect_clicked(move |_| {
+        let (u, p, g, e) = (u.clone(), p.clone(), g.clone(), e.clone());
+        w::ask_text(
+            "Recovery code",
+            "The code you saved when you set up two-step login. Using it signs you in and turns two-step login off for the account; set it up again in the web vault afterwards.",
+            "",
+            "Sign in",
+            move |text| {
+                let code: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+                sign_in(&u, p.clone(), Some((RECOVERY_CODE, code)), &g, &e);
+            },
+        );
+    });
 
     let u = ui.clone();
     back.connect_clicked(move |_| sign_in_page(&u, None));
@@ -356,11 +508,87 @@ fn unlock_page(ui: &Ui) {
     password.grab_focus();
 }
 
+thread_local! {
+    /// Sign-in requests already put in front of the user.
+    static ASKED: std::cell::RefCell<std::collections::HashSet<String>> = Default::default();
+}
+
+/// Another device asking to sign in with this account: ask the user, once per request.
+pub fn check_sign_in_requests(ui: &Ui) {
+    #[derive(serde::Deserialize)]
+    struct Request {
+        id: String,
+        device: String,
+        ip: String,
+        fingerprint: String,
+    }
+    let ui = ui.clone();
+    glib::spawn_future_local(async move {
+        let Ok(json) = client::text("SignInRequests", None).await else { return };
+        let Ok(list) = serde_json::from_str::<Vec<Request>>(&json) else { return };
+        for r in list {
+            if !ASKED.with(|a| a.borrow_mut().insert(r.id.clone())) {
+                continue;
+            }
+            let (dialog, card) = w::dialog("Approve a sign-in?", 460);
+            dialog.set_transient_for(Some(&ui.window));
+            let from = if r.ip.is_empty() { device_name(&r.device) } else { format!("{} at {}", device_name(&r.device), r.ip) };
+            card.append(&label(
+                &format!(
+                    "{from} asks to sign in to your account. Approve it only if you started it there and it shows these words:"
+                ),
+                "dim",
+            ));
+            let phrase = label(&r.fingerprint, "pairing-code");
+            phrase.set_selectable(true);
+            card.append(&phrase);
+            let decline = gtk::Button::with_label("Decline");
+            let approve = gtk::Button::with_label("Approve");
+            approve.add_css_class("suggested-action");
+            card.append(&buttons(&[&decline, &approve]));
+            for (button, yes) in [(&decline, false), (&approve, true)] {
+                let (u, d, id) = (ui.clone(), dialog.clone(), r.id.clone());
+                button.connect_clicked(move |_| {
+                    d.close();
+                    let (u, id) = (u.clone(), id.clone());
+                    glib::spawn_future_local(async move {
+                        match client::call("AnswerSignIn", Some((id.as_str(), yes).to_variant())).await {
+                            Ok(_) => ui::toast(&u, if yes { "Approved: the other device is signing in." } else { "Declined." }),
+                            Err(e) => ui::toast(&u, &e.to_string()),
+                        }
+                    });
+                });
+            }
+            dialog.present();
+        }
+    });
+}
+
+/// Bitwarden's device types, as the server may name them by number.
+fn device_name(kind: &str) -> String {
+    let name = match kind {
+        "0" | "15" => "An Android device",
+        "1" => "An iPhone or iPad",
+        "2" | "3" | "4" | "5" | "19" | "20" => "A browser extension",
+        "6" | "7" | "8" | "16" => "A desktop app",
+        "9" | "10" | "11" | "12" | "13" | "14" | "17" | "18" => "A web browser",
+        "23" | "24" | "25" => "The command line",
+        "" => "A device",
+        other => return other.to_string(),
+    };
+    name.to_string()
+}
+
 /// Asks for the master password again for an item that wants it, then runs `then`.
 pub fn confirm(ui: &Ui, then: impl Fn() + 'static) {
+    confirm_for(ui, "This item asks for your master password before showing its secrets.", then);
+}
+
+/// Asks for the master password, saying why, then runs `then`.
+pub fn confirm_for(ui: &Ui, why: &str, then: impl Fn() + 'static) {
     let (dialog, card) = w::dialog("Master password", 420);
     dialog.set_transient_for(Some(&ui.window));
-    card.append(&label("This item asks for your master password before showing its secrets.", "dim"));
+    card.append(&label(why, "dim"));
     let password = gtk::PasswordEntry::new();
     password.set_show_peek_icon(true);
     card.append(&password);

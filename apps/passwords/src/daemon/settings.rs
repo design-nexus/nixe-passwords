@@ -24,6 +24,11 @@ pub struct Settings {
     pub notify_copies: bool,
     /// Sync every this many minutes while unlocked; 0 only on unlock and on demand.
     pub sync_minutes: u64,
+    /// Listen to the server's notification hub and sync when the vault changes elsewhere.
+    pub live_sync: bool,
+    /// Show website icons, fetched through the server's icon service and kept in the
+    /// cache folder. Off until turned on.
+    pub icons: bool,
     /// Whether Glimpse may search the vault and copy from it.
     pub glimpse: bool,
     /// Whether Nyx Assistant may find logins and copy from them (each call still needs
@@ -36,6 +41,13 @@ pub struct Settings {
     pub generate_passphrase: bool,
     pub password_rules: PasswordRules,
     pub passphrase_rules: PassphraseRules,
+    /// Paired browsers fill a site's login as its page loads (with the safeguards in
+    /// docs/NATIVE_MESSAGING.md). On unless turned off.
+    pub fill_on_load: bool,
+    /// Paired browsers may offer and use passkeys. Off until turned on.
+    pub browser_passkeys: bool,
+    /// What the username generator makes (tokens for alias services are in the keyring).
+    pub username_rules: nyx_passwords_core::alias::UsernameRules,
 }
 
 impl Default for Settings {
@@ -48,12 +60,17 @@ impl Default for Settings {
             paste_once: false,
             notify_copies: true,
             sync_minutes: 30,
+            live_sync: true,
+            icons: false,
             glimpse: true,
             assistant: false,
             extra_ca: None,
             generate_passphrase: false,
             password_rules: PasswordRules::default(),
             passphrase_rules: PassphraseRules::default(),
+            fill_on_load: true,
+            browser_passkeys: false,
+            username_rules: Default::default(),
         }
     }
 }

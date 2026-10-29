@@ -10,7 +10,7 @@ mod common;
 use std::num::NonZeroU32;
 
 use nyx_passwords_core::api::{ApiError, Server};
-use nyx_passwords_core::edit::{ItemDraft, LoginDraft, Place};
+use nyx_passwords_core::edit::{CustomDraft, ItemDraft, LoginDraft, Place};
 use nyx_passwords_core::model::Kind;
 use nyx_passwords_core::secret::Secret;
 use nyx_passwords_core::session::{self, Session, SessionError, SignIn};
@@ -31,6 +31,7 @@ fn draft(name: &str, password: &str) -> LoginDraft {
         favorite: true,
         reprompt: false,
         place: Place::default(),
+        custom: None,
     }
 }
 
@@ -121,6 +122,7 @@ fn draft_of(item: &Value) -> LoginDraft {
                 .map(|c| c.as_str().unwrap().parse().unwrap())
                 .collect(),
         },
+        custom: None,
     }
 }
 
@@ -262,6 +264,7 @@ fn item_draft(kind: Kind, name: &str, fields: &[(&str, &str)]) -> ItemDraft {
         favorite: false,
         reprompt: false,
         place: Place::default(),
+        custom: None,
     }
 }
 
@@ -646,4 +649,95 @@ async fn attachments_round_trip_with_bw() {
         s.add_attachment(&mut store, &server, &refresh, id, "big.bin", &too_big).await,
         Err(SessionError::NotAllowed(_))
     ));
+}
+
+fn custom(name: &str, value: Option<&str>, kind: i64, from: Option<usize>) -> CustomDraft {
+    CustomDraft { name: Secret::new(name), value: value.map(Secret::new), kind, from }
+}
+
+/// Folders made, renamed and deleted here; custom fields edited; old passwords read back;
+/// several items moved, trashed, restored and deleted for good. `bw` sees each change.
+#[tokio::test]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
+async fn folders_fields_history_and_many_items() {
+    let email = common::fresh_email("organize");
+    let password = "correct horse organize battery";
+    common::register(&email, password, &bitwarden_crypto::Kdf::PBKDF2 { iterations: NonZeroU32::new(600_000).unwrap() }).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+    let server = Server::new(&common::server_url(), &[common::ca_pem()]).unwrap();
+    let SignIn::Done(mut s) =
+        session::sign_in(&mut store, &server, &email, &Secret::new(password), "nyx test", None).await.unwrap()
+    else {
+        panic!("two-step login")
+    };
+    let refresh = Secret::new(s.refresh_token().unwrap().expose());
+    let bw = common::Bw::login(&email, password);
+
+    // Folders: made and renamed here, seen by bw; an empty name is refused.
+    let work = s.create_folder(&mut store, &server, &refresh, &Secret::new(" Work ")).await.unwrap();
+    assert!(s.create_folder(&mut store, &server, &refresh, &Secret::new("  ")).await.is_err());
+    s.rename_folder(&mut store, &server, &refresh, work, &Secret::new("Job")).await.unwrap();
+    assert_eq!(s.view.folder_name(work), Some("Job"));
+    bw.run(&["sync"]);
+    let folders: Value = serde_json::from_str(&bw.run(&["list", "folders"])).unwrap();
+    assert!(folders.as_array().unwrap().iter().any(|f| f["id"] == work.to_string() && f["name"] == "Job"));
+
+    // Custom fields: added on create, then edited. bw wrote a linked field and a hidden
+    // one in the meantime; the hidden one's value stays when the draft leaves it out.
+    let mut d = draft("Fields", "canary-f1-Pw!9");
+    d.folder = Some(work);
+    d.custom = Some(vec![custom("pin", Some("1234"), 1, None), custom("note", Some("plain"), 0, None)]);
+    let id = s.create_login(&mut store, &server, &refresh, &d).await.unwrap();
+    let item = bw.item(&id.to_string());
+    assert_eq!(item["folderId"], work.to_string());
+    assert_eq!((item["fields"][0]["name"].as_str(), item["fields"][0]["value"].as_str()), (Some("pin"), Some("1234")));
+    assert_eq!(item["fields"][0]["type"], 1);
+    let mut theirs = item.clone();
+    theirs["fields"].as_array_mut().unwrap().push(json!({"name": "linked", "value": null, "type": 3, "linkedId": 100}));
+    bw.edit(&id.to_string(), &theirs);
+    s.sync(&mut store, &server, &refresh).await.unwrap();
+    let mut d = draft("Fields", "canary-f2-Pw!9");
+    d.folder = Some(work);
+    d.custom = Some(vec![custom("pin renamed", None, 1, Some(0)), custom("flag", Some("true"), 2, None)]);
+    s.update_login(&mut store, &server, &refresh, id, &d).await.unwrap();
+    let fields = bw.item(&id.to_string())["fields"].clone();
+    assert_eq!(fields.as_array().unwrap().len(), 3, "{fields}");
+    assert_eq!((fields[0]["name"].as_str(), fields[0]["value"].as_str()), (Some("pin renamed"), Some("1234")));
+    assert_eq!((fields[1]["type"].as_i64(), fields[1]["value"].as_str()), (Some(2), Some("true")));
+    assert_eq!((fields[2]["type"].as_i64(), fields[2]["linkedId"].as_i64()), (Some(3), Some(100)));
+
+    // The old password, newest first.
+    assert_eq!(nyx_passwords_core::vault::history(&s.snapshot, id).unwrap().len(), 1);
+    assert_eq!(reveal(&s.keys, &s.snapshot, id, Field::History(0)).unwrap().expose(), "canary-f1-Pw!9");
+    assert!(reveal(&s.keys, &s.snapshot, id, Field::History(1)).is_err());
+
+    // Deleting the folder leaves its item, in no folder.
+    s.delete_folder(&mut store, &server, &refresh, work).await.unwrap();
+    assert!(s.view.folders.is_empty() && s.view.get(id).unwrap().folder.is_none());
+    assert!(bw.item(&id.to_string())["folderId"].is_null());
+
+    // Several items: into a folder, to the trash, back, and deleted for good.
+    let other = s.create_login(&mut store, &server, &refresh, &draft("Other", "canary-o-Pw!9")).await.unwrap();
+    let home = s.create_folder(&mut store, &server, &refresh, &Secret::new("Home")).await.unwrap();
+    s.move_many(&mut store, &server, &refresh, &[id, other], Some(home)).await.unwrap();
+    assert!([id, other].iter().all(|i| s.view.get(*i).unwrap().folder == Some(home)));
+    assert_eq!(bw.item(&other.to_string())["folderId"], home.to_string());
+    let removed = s.delete_forever(&mut store, &server, &refresh, &[id]).await;
+    assert!(matches!(removed, Err(SessionError::NotAllowed(_))), "only from the trash");
+    s.trash_many(&mut store, &server, &refresh, &[id, other], false).await.unwrap();
+    assert!([id, other].iter().all(|i| s.view.get(*i).unwrap().deleted));
+    s.trash_many(&mut store, &server, &refresh, &[other], true).await.unwrap();
+    assert!(!s.view.get(other).unwrap().deleted);
+    s.delete_forever(&mut store, &server, &refresh, &[id]).await.unwrap();
+    assert!(s.view.get(id).is_none() && !s.snapshot.ciphers.iter().any(|c| c.id == id));
+    bw.run(&["sync"]);
+    let everywhere = format!("{}{}", bw.run(&["list", "items"]), bw.run(&["list", "items", "--trash"]));
+    assert!(!everywhere.contains(&id.to_string()) && everywhere.contains(&other.to_string()));
+
+    // The local copy has it all: unlock offline and look.
+    s.lock();
+    let s = session::unlock(&mut store, &Secret::new(password)).await.unwrap();
+    assert_eq!(s.view.folder_name(home), Some("Home"));
+    assert!(s.view.get(id).is_none() && s.view.get(other).is_some());
 }

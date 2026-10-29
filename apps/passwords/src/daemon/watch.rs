@@ -19,6 +19,58 @@ pub fn spawn_all(vault: &Arc<Vault>) {
     tokio::spawn(screen(vault.clone()));
     tokio::spawn(logind(vault.clone()));
     tokio::spawn(periodic_sync(vault.clone()));
+    tokio::spawn(live_sync(vault.clone()));
+    tokio::spawn(updated(vault.clone()));
+}
+
+/// After an update replaced the binary, starts again on it as soon as the vault is
+/// locked and nothing is waiting on this one. While it's open, the window offers that.
+async fn updated(vault: Arc<Vault>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        if super::replaced() && vault.idle_while_locked().await {
+            super::restart();
+            return;
+        }
+    }
+}
+
+/// While the vault is open, listens to the server's notification hub and syncs when the
+/// vault changes on another device. A burst of changes (a bulk edit) is one sync. The
+/// connection is dropped when the vault locks, and tried again with a growing pause
+/// when it fails (an old server, a proxy without WebSockets).
+async fn live_sync(vault: Arc<Vault>) {
+    use nyx_passwords_core::live::Event;
+    let mut pause = Duration::from_secs(5);
+    loop {
+        tokio::time::sleep(pause).await;
+        if !vault.settings().await.live_sync || !vault.is_unlocked().await {
+            pause = Duration::from_secs(5);
+            continue;
+        }
+        let Ok(mut hub) = vault.connect_hub().await else {
+            pause = (pause * 2).min(Duration::from_secs(300));
+            continue;
+        };
+        pause = Duration::from_secs(5);
+        // Changes made while it was connecting, or before it last connected.
+        let _ = vault.sync(Scope::App).await;
+        while let Some(event) = hub.next().await {
+            if !vault.is_unlocked().await || !vault.settings().await.live_sync {
+                break;
+            }
+            if let Event::AuthRequest(_) = event {
+                vault.sign_in_requested().await;
+                continue;
+            }
+            if matches!(event, Event::Changed | Event::LoggedOut) {
+                while let Ok(Some(Event::Changed | Event::Idle)) =
+                    tokio::time::timeout(Duration::from_millis(700), hub.next()).await
+                {}
+                let _ = vault.sync(Scope::App).await;
+            }
+        }
+    }
 }
 
 async fn idle(vault: Arc<Vault>) {

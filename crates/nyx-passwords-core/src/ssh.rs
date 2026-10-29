@@ -17,15 +17,17 @@ pub struct SshKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SshError {
-    /// Protected by a passphrase; this client doesn't take passphrases yet.
+    /// Protected by a passphrase: open it with `read_with_passphrase`.
     Encrypted,
+    WrongPassphrase,
     Unreadable,
 }
 
 impl fmt::Display for SshError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(match self {
-            Self::Encrypted => "this key has a passphrase; import a copy without one (ssh-keygen -p -N \"\" -f COPY)",
+            Self::Encrypted => "this key has a passphrase",
+            Self::WrongPassphrase => "that passphrase doesn't open this key",
             Self::Unreadable => "this isn't an OpenSSH private key",
         })
     }
@@ -47,6 +49,17 @@ pub fn read(private: &str) -> Result<SshKey, SshError> {
         return Err(SshError::Encrypted);
     }
     Ok(describe(&key))
+}
+
+/// A private key protected by a passphrase, opened with it. The key is kept without the
+/// passphrase, as the official clients store keys (the vault encrypts it instead).
+pub fn read_with_passphrase(private: &str, passphrase: &Secret) -> Result<SshKey, SshError> {
+    let key = PrivateKey::from_openssh(private.trim()).map_err(|_| SshError::Unreadable)?;
+    if !key.is_encrypted() {
+        return Ok(describe(&key));
+    }
+    let opened = key.decrypt(passphrase.expose().as_bytes()).map_err(|_| SshError::WrongPassphrase)?;
+    Ok(describe(&opened))
 }
 
 fn describe(key: &PrivateKey) -> SshKey {
@@ -79,6 +92,21 @@ mod tests {
         let again = read(made.private.expose()).unwrap();
         assert_ne!(generate().fingerprint, again.fingerprint);
         assert_eq!((again.public, again.fingerprint), (made.public, made.fingerprint));
+    }
+
+    #[test]
+    fn opens_keys_with_their_passphrase() {
+        // Made with `ssh-keygen -t ed25519 -N 'nyx test passphrase'`; never used anywhere.
+        let locked = include_str!("../tests/fixtures/ssh-ed25519-known-passphrase");
+        assert_eq!(read(locked).err(), Some(SshError::Encrypted));
+        let wrong = read_with_passphrase(locked, &Secret::new("not it"));
+        assert_eq!(wrong.err(), Some(SshError::WrongPassphrase));
+        let opened = read_with_passphrase(locked, &Secret::new("nyx test passphrase")).unwrap();
+        assert!(opened.public.starts_with("ssh-ed25519 ") && opened.fingerprint.starts_with("SHA256:"));
+        // Stored without the passphrase: it reads back as is.
+        assert_eq!(read(opened.private.expose()).unwrap().fingerprint, opened.fingerprint);
+        // A key without one opens whatever the passphrase.
+        assert_eq!(read_with_passphrase(KEY, &Secret::new("x")).unwrap().fingerprint, FINGERPRINT.trim());
     }
 
     #[test]

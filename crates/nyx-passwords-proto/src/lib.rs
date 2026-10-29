@@ -105,6 +105,29 @@ pub mod fields {
     }
 }
 
+/// Custom fields with a meaning for Passwords and its extension. They're ordinary custom
+/// fields to the official clients, which keep them.
+pub mod custom {
+    /// The sign-in provider a login uses instead of a password (universal sign-on): one
+    /// of `PROVIDERS`.
+    pub const SIGN_IN_WITH: &str = "nyx:sign-in-with";
+    /// True or false: this login isn't filled as its page loads.
+    pub const NO_FILL_ON_LOAD: &str = "nyx:no-fill-on-load";
+    /// Providers the extension recognizes: id and name.
+    pub const PROVIDERS: &[(&str, &str)] = &[
+        ("google", "Google"),
+        ("apple", "Apple"),
+        ("microsoft", "Microsoft"),
+        ("github", "GitHub"),
+        ("facebook", "Facebook"),
+        ("gitlab", "GitLab"),
+        ("twitter", "X"),
+        ("linkedin", "LinkedIn"),
+        ("amazon", "Amazon"),
+        ("slack", "Slack"),
+    ];
+}
+
 /// One search result: `(id, name, username, host, has_totp, kind)`. `kind` is `login`,
 /// `note`, `card`, `identity`, `ssh` or `other`; `username` and `host` may be empty.
 pub type Item = (String, String, String, String, bool, String);
@@ -129,10 +152,12 @@ pub enum Error {
     Conflict,
     /// Signing in, unlocking or syncing failed; the message says why.
     Failed,
+    /// The file is protected by a password: ask for it and try again.
+    NeedsPassword,
 }
 
 impl Error {
-    pub const ALL: [Error; 11] = [
+    pub const ALL: [Error; 12] = [
         Error::Locked,
         Error::LoggedOut,
         Error::Denied,
@@ -144,6 +169,7 @@ impl Error {
         Error::Reprompt,
         Error::Conflict,
         Error::Failed,
+        Error::NeedsPassword,
     ];
 
     pub fn short(self) -> &'static str {
@@ -159,6 +185,7 @@ impl Error {
             Error::Reprompt => "Reprompt",
             Error::Conflict => "Conflict",
             Error::Failed => "Failed",
+            Error::NeedsPassword => "NeedsPassword",
         }
     }
 

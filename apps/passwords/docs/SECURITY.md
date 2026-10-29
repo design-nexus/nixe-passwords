@@ -15,6 +15,7 @@ can't meet a rule, the change waits; the rule doesn't bend.
 | Access token | Daemon memory |
 | Refresh token | Secret Service |
 | User key | Secret Service, only while "Unlock with the keyring" is on (off by default). Then anyone who can use the logged-in session, including programs running as the user, can open the vault; the setting says so |
+| A grantor's vault (emergency access) | Daemon memory while it's open for viewing, dropped on lock; their user key arrives encrypted for this account's public key |
 | Encrypted snapshot | `vault.sqlite` (0600), the same ciphertext the server keeps |
 
 Metadata counts as sensitive. It isn't a secret like a password, but it is never
@@ -27,7 +28,7 @@ paired browser asking about its own origin.
 | --- | --- | --- |
 | Someone who gets the disk (theft, backup, a shared machine) | Yes | Only ciphertext and a refresh token in a keyring are stored. A refresh token alone can't decrypt anything. Unlocking needs the master password. |
 | Network attacker | Yes | rustls with system roots. `http://` only on loopback. No certificate-pinning bypass and no "ignore errors" switch. |
-| Malicious or compromised web page | Yes | The origin comes from browser tab APIs, not from the page. Base-domain matching uses the PSL. Fill needs a user gesture. No fill into cross-origin frames unless their origin matches. One item per request. |
+| Malicious or compromised web page | Yes | The origin comes from browser tab APIs, not from the page. Base-domain matching uses the PSL. A fill is a user's click or shortcut, or the narrow page-load fill below. No fill into cross-origin frames unless their site matches. One item per request. The page can't read or press the extension's menu, bar or passkey window. |
 | A malicious extension or a process pretending to be the extension | Yes | Pairing is confirmed by the user in the desktop app. Every message is authenticated with the pairing key, carries a counter (no replays) and is scoped to its origin. |
 | An unrelated app on the session bus | Yes | Vault traffic never goes on the session bus. The socket checks the uid and the executable, and each peer gets a fixed scope. |
 | A malicious process running as the same user | **Partly** | See below. |
@@ -75,6 +76,17 @@ against that. What Nyx Passwords does:
   characters of each password's SHA-1 hash, one request per distinct prefix, with
   padding on; the answer is matched here. Never automatic.
 
+- **Your server's notification hub** (`/notifications/hub`): while the vault is open
+  and live sync is on, a WebSocket with the access token. It hears only "something
+  changed" (ids and dates); the daemon then syncs as usual.
+- **Your server's icon service** (`/icons/<host>/icon.png`): only with website icons
+  turned on. The server learns each login's host and fetches the icon from that site.
+  Icons stay in daemon memory until the vault locks; none are written to disk.
+
+- **An email alias service** (SimpleLogin, addy.io, Firefox Relay, DuckDuckGo,
+  Fastmail, Forward Email): only when you generate a username with it. It gets your
+  API token and the site's name. The token stays in the desktop keyring.
+
 The security report itself (weak, reused, old) is worked out in daemon memory. Its
 strength cache keeps only item ids, revisions and a weak/not-weak flag, and is
 dropped on lock.
@@ -89,11 +101,35 @@ dropped on lock.
   - The daemon keeps it encrypted under the user key, so a locked vault answers no
     one.
 - **What a request can get:**
-  - only items whose web address matches the tab's URL under its rule;
+  - only items whose web address matches the tab's URL under its rule (or a login
+    the user picked from the whole vault in the popup and confirmed for this page
+    after a warning);
   - only for a frame on the same base domain;
-  - nothing for a plain-`http` page unless the address says `http://`;
-  - nothing from an item that asks for the master password again.
-- **Fill rate:** at most 30 fills a minute per pairing.
+  - nothing for a plain-`http` page unless the address says `http://`, and cards
+    only on https;
+  - nothing from an item that asks for the master password again;
+  - from the popup's search: names, usernames and hosts, no secrets. A popup copy
+    goes through the daemon's clipboard, so the value never enters the browser.
+- **Filling as the page loads:** on by default, off in the app's settings (the daemon
+  enforces it) or the extension's. Only on https, into the top frame or a same-site
+  frame, for a login whose address names this very host, with one such login (or the
+  one last used), never a re-prompting login or one marked not to, and only into
+  empty visible fields. A page can still make the fields its own (that's how it
+  learns a filled password anyway); the narrow host rule stops a page on another
+  subdomain from collecting it.
+- **The extension's own pages:** the menu under a field and the save bar are
+  extension pages in frames inside a closed shadow root; the passkey prompt is its own
+  window. The page can't read them or click them. Each acts only for the tab and
+  frame it was opened for, under a random token.
+- **Passkeys** (off by default, on in both the app and the extension): the extension
+  builds the signed client data from the frame's origin as the browser reports it,
+  never the page's word; the relying-party id must be the page's host or a registrable
+  domain above it; every use and every new passkey is confirmed in the extension's
+  window. Private keys stay in the daemon.
+- **Save prompts:** the never-save list is kept encrypted with the user key. The save
+  bar asks only after the daemon says the login is new or changed; a password typed
+  into a page reaches the daemon only when the user clicks Save.
+- **Rate:** at most 30 fills, copies and changes a minute per pairing.
 - **Where the URL comes from:** the browser's tab API, never page content. The fill
   re-checks the page's origin before typing anything, so a tab that navigated after
   the request gets nothing.

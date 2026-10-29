@@ -6,6 +6,8 @@ mod client;
 mod data;
 mod detail;
 mod editor;
+mod emergency;
+mod icons;
 mod pairing;
 pub mod prefs;
 mod security;
@@ -13,4 +15,5 @@ mod settings;
 #[cfg(debug_assertions)]
 pub mod fixture;
 mod theme;
+mod transfer;
 pub mod ui;

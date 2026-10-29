@@ -222,3 +222,10 @@ clears any clipboard value this daemon still owns.
 second instance. The app, Glimpse and the bridge start it with
 `systemctl --user start nyx-passwords.service` when the socket is missing. The service
 has no `ExecStart` arguments carrying data.
+
+An update replaces the binary but leaves a running daemon alone, since restarting locks
+the vault. The daemon notices the new file (its inode changed). Once the vault is locked,
+it exits with status 75 and the unit starts it again (`RestartForceExitStatus=75`).
+While the vault is open, the window asks `Outdated` and offers "Restart", which calls
+`Restart` (app scope only). A daemon too old to know `Outdated` counts as outdated, and
+the window restarts it through its unit.

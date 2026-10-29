@@ -105,6 +105,23 @@ window.passwords-window .app-header button.bar-button:hover {
   margin-top: 6px;
 }
 
+/* The one-time code's countdown: the ring draws in its own color. */
+.code-ring {
+  color: @theme_accent;
+}
+
+.code-ring.ending,
+.code-seconds.ending {
+  color: @theme_warning;
+}
+
+.code-seconds {
+  font-size: 10px;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  color: @theme_dim_text;
+}
+
 /* ---------- Sign in, unlock, pairing ---------- */
 
 .account-card {

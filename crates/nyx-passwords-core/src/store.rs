@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::crypto::Kdf;
-use crate::model::{Cipher, Sync};
+use crate::model::{Cipher, Folder, Sync};
 
 const SCHEMA: i64 = 1;
 
@@ -155,7 +155,7 @@ impl Store {
     /// the sync time, user id and KDF on the account. Needs the account to be set.
     pub fn replace_snapshot(&mut self, sync: &Sync, kdf: Kdf, synced_at: u64) -> Result<()> {
         let tx = self.db.transaction().map_err(|_| StoreError::Write)?;
-        tx.execute("DELETE FROM object", []).map_err(|_| StoreError::Write)?;
+        tx.execute("DELETE FROM object WHERE kind != 'setting'", []).map_err(|_| StoreError::Write)?;
         {
             let mut put = tx.prepare("INSERT INTO object (kind, id, json) VALUES (?1, ?2, ?3)").map_err(|_| StoreError::Write)?;
             let mut row = |kind: &str, id: String, json: Result<String>| -> Result<()> {
@@ -215,6 +215,62 @@ impl Store {
     pub fn remove_cipher(&self, id: Uuid) -> Result<()> {
         self.db
             .execute("DELETE FROM object WHERE kind = 'cipher' AND id = ?1", [id.to_string()])
+            .map(|_| ())
+            .map_err(|_| StoreError::Write)
+    }
+
+    /// A value kept beside the vault (`kind` names it). Callers store only ciphertext or
+    /// values that say nothing about the vault.
+    pub fn setting(&self, kind: &str) -> Result<Option<String>> {
+        self.one("setting", kind)
+    }
+
+    pub fn set_setting(&self, kind: &str, value: &str) -> Result<()> {
+        self.db
+            .execute(
+                "INSERT INTO object (kind, id, json) VALUES ('setting', ?1, ?2) ON CONFLICT (kind, id) DO UPDATE SET json = ?2",
+                params![kind, value],
+            )
+            .map(|_| ())
+            .map_err(|_| StoreError::Write)
+    }
+
+    /// This install's device id, kept across sign-outs as the official apps keep theirs:
+    /// Vaultwarden lets only a device that signed in before ask another to approve it.
+    pub fn device_id(&self) -> Result<Uuid> {
+        let kept: Option<String> = self
+            .db
+            .query_row("SELECT value FROM meta WHERE key = 'device'", [], |r| r.get(0))
+            .optional()
+            .map_err(|_| StoreError::Read)?;
+        if let Some(id) = kept.and_then(|v| v.parse().ok()) {
+            return Ok(id);
+        }
+        let id = self.account()?.map_or_else(Uuid::new_v4, |a| a.device_id);
+        self.db
+            .execute(
+                "INSERT INTO meta (key, value) VALUES ('device', ?1) ON CONFLICT (key) DO UPDATE SET value = ?1",
+                [id.to_string()],
+            )
+            .map_err(|_| StoreError::Write)?;
+        Ok(id)
+    }
+
+    /// Stores one folder as the server returned it.
+    pub fn put_folder(&self, folder: &Folder) -> Result<()> {
+        self.db
+            .execute(
+                "INSERT INTO object (kind, id, json) VALUES ('folder', ?1, ?2)
+                 ON CONFLICT (kind, id) DO UPDATE SET json = ?2",
+                params![folder.id.to_string(), to_json(folder)?],
+            )
+            .map(|_| ())
+            .map_err(|_| StoreError::Write)
+    }
+
+    pub fn remove_folder(&self, id: Uuid) -> Result<()> {
+        self.db
+            .execute("DELETE FROM object WHERE kind = 'folder' AND id = ?1", [id.to_string()])
             .map(|_| ())
             .map_err(|_| StoreError::Write)
     }

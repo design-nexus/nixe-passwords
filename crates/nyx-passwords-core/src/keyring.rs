@@ -43,6 +43,8 @@ pub struct Entry {
 enum Kind {
     Session,
     UnlockKey,
+    /// An email alias service's API token (`alias::SERVICES`).
+    Forwarder(&'static str),
 }
 
 /// Which name the suite had when an entry was saved. Entries saved as Nixe are moved
@@ -53,12 +55,14 @@ enum Era {
     Nixe,
 }
 
-fn application(kind: Kind, era: Era) -> &'static str {
+fn application(kind: Kind, era: Era) -> String {
     match (kind, era) {
-        (Kind::Session, Era::Nyx) => "nyx-passwords",
-        (Kind::UnlockKey, Era::Nyx) => "nyx-passwords-unlock",
-        (Kind::Session, Era::Nixe) => "nixe-passwords",
-        (Kind::UnlockKey, Era::Nixe) => "nixe-passwords-unlock",
+        (Kind::Session, Era::Nyx) => "nyx-passwords".into(),
+        (Kind::UnlockKey, Era::Nyx) => "nyx-passwords-unlock".into(),
+        (Kind::Session, Era::Nixe) => "nixe-passwords".into(),
+        (Kind::UnlockKey, Era::Nixe) => "nixe-passwords-unlock".into(),
+        // Saved only under the Nyx name.
+        (Kind::Forwarder(service), _) => format!("nyx-passwords-forwarder-{service}"),
     }
 }
 
@@ -72,13 +76,14 @@ impl Entry {
         let label = match kind {
             Kind::Session => "Nyx Passwords session",
             Kind::UnlockKey => "Nyx Passwords unlock key",
+            Kind::Forwarder(_) => "Nyx Passwords email alias token",
         };
         let mut c = Command::new("secret-tool");
         c.arg(verb);
         if verb == "store" {
             c.arg(format!("--label={label}"));
         }
-        c.args(["application", application, "server", &self.server, "account", &self.email]);
+        c.args(["application", &application, "server", &self.server, "account", &self.email]);
         c.stderr(Stdio::null());
         c
     }
@@ -108,6 +113,19 @@ impl Entry {
 
     pub fn clear_unlock_key(&self) -> Result<(), KeyringError> {
         self.remove(Kind::UnlockKey)
+    }
+
+    /// Saves an email alias service's API token (`service` is one of `alias::SERVICES`).
+    pub fn save_forwarder_token(&self, service: &str, token: &Secret) -> Result<(), KeyringError> {
+        self.store(token, forwarder(service)?)
+    }
+
+    pub fn load_forwarder_token(&self, service: &str) -> Result<Option<Secret>, KeyringError> {
+        self.lookup_in(forwarder(service)?, Era::Nyx)
+    }
+
+    pub fn clear_forwarder_token(&self, service: &str) -> Result<(), KeyringError> {
+        self.remove(forwarder(service)?)
     }
 
     fn store(&self, token: &Secret, kind: Kind) -> Result<(), KeyringError> {
@@ -164,6 +182,10 @@ impl Entry {
             self.tool("clear", kind).stdin(Stdio::null()).stdout(Stdio::null()).status().map_err(|_| KeyringError::Missing)?;
         if status.success() { Ok(()) } else { Err(KeyringError::Refused) }
     }
+}
+
+fn forwarder(service: &str) -> Result<Kind, KeyringError> {
+    crate::alias::SERVICES.iter().find(|(id, _)| *id == service).map(|(id, _)| Kind::Forwarder(id)).ok_or(KeyringError::Refused)
 }
 
 #[cfg(test)]

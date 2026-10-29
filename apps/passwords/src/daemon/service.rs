@@ -29,6 +29,7 @@ pub enum Error {
     Reprompt(String),
     Conflict(String),
     Failed(String),
+    NeedsPassword(String),
 }
 
 impl From<Failure> for Error {
@@ -46,6 +47,7 @@ impl From<Failure> for Error {
             Code::Reprompt => Error::Reprompt(m),
             Code::Conflict => Error::Conflict(m),
             Code::Failed => Error::Failed(m),
+            Code::NeedsPassword => Error::NeedsPassword(m),
         }
     }
 }
@@ -104,6 +106,26 @@ impl Service {
         Ok(self.vault.sync(self.scope).await?)
     }
 
+    /// A site's icon (website icons must be turned on); `NoField` when it has none.
+    async fn icon(&self, host: String) -> Result<Vec<u8>, Error> {
+        Ok(self.vault.icon(self.scope, &host).await?)
+    }
+
+    /// Goes up with each sync applied, so the window knows when to list again.
+    async fn revision(&self) -> Result<u64, Error> {
+        Ok(self.vault.revision(self.scope).await?)
+    }
+
+    /// Whether an update has replaced this daemon's binary since it started.
+    async fn outdated(&self) -> bool {
+        super::replaced()
+    }
+
+    /// Locks and starts again on the updated binary.
+    async fn restart(&self) -> Result<(), Error> {
+        Ok(self.vault.restart_for_update(self.scope)?)
+    }
+
     // ---- the app ----
 
     /// Signs in. `method` 255 means no two-step answer. Returns `(done, methods)`: when
@@ -121,6 +143,42 @@ impl Service {
             SignInResult::Done => Ok((true, Vec::new())),
             SignInResult::TwoFactor(methods) => Ok((false, methods.iter().map(method_pair).collect())),
         }
+    }
+
+    /// Signs in with the account's API key (`user.<id>` and its secret), then opens the
+    /// vault with the master password.
+    async fn sign_in_with_api_key(
+        &self,
+        server: String,
+        client_id: String,
+        secret: String,
+        password: String,
+    ) -> Result<(), Error> {
+        Ok(self.vault.sign_in_with_api_key(self.scope, &server, &client_id, Secret::new(secret), Secret::new(password)).await?)
+    }
+
+    /// Asks the account's other devices to approve signing in here; returns the
+    /// fingerprint phrase both show.
+    async fn request_device_sign_in(&self, server: String, email: String) -> Result<String, Error> {
+        Ok(self.vault.request_device_sign_in(self.scope, &server, &email).await?)
+    }
+
+    /// True once another device approved and the vault is open.
+    async fn poll_device_sign_in(&self) -> Result<bool, Error> {
+        Ok(self.vault.poll_device_sign_in(self.scope).await?)
+    }
+
+    async fn cancel_device_sign_in(&self) -> Result<(), Error> {
+        Ok(self.vault.cancel_device_sign_in(self.scope).await?)
+    }
+
+    /// Other devices asking to sign in with this account, as JSON.
+    async fn sign_in_requests(&self) -> Result<String, Error> {
+        Ok(self.vault.sign_in_requests(self.scope).await?)
+    }
+
+    async fn answer_sign_in(&self, id: String, approve: bool) -> Result<(), Error> {
+        Ok(self.vault.answer_sign_in(self.scope, &id, approve).await?)
     }
 
     async fn send_email_code(&self, server: String, email: String, password: String) -> Result<(), Error> {
@@ -151,6 +209,12 @@ impl Service {
         Ok(self.vault.reveal(self.scope, &id, &field).await?.expose().to_string())
     }
 
+    /// The current one-time code: `(code, period, seconds left)`.
+    async fn totp(&self, id: String) -> Result<(String, u32, u32), Error> {
+        let (code, period, left) = self.vault.totp(self.scope, &id).await?;
+        Ok((code.expose().to_string(), period, left))
+    }
+
     /// An item's other fields (card, identity, SSH key, custom) as JSON; secret values
     /// are left out.
     async fn fields(&self, id: String) -> Result<String, Error> {
@@ -160,6 +224,61 @@ impl Service {
     /// A password for the editor, from rules as JSON (`{"kind":"password",…}`).
     async fn generate_password(&self, rules: String) -> Result<String, Error> {
         Ok(self.vault.generate_password(self.scope, &rules).await?.expose().to_string())
+    }
+
+    /// A username from the generator settings; `site` is the login's address or empty.
+    async fn generate_username(&self, site: String) -> Result<String, Error> {
+        Ok(self.vault.generate_username(self.scope, &site).await?.expose().to_string())
+    }
+
+    /// Saves an email alias service's API token in the keyring; empty removes it.
+    async fn set_forwarder_token(&self, service: String, token: String) -> Result<(), Error> {
+        Ok(self.vault.set_forwarder_token(self.scope, &service, Secret::new(token)).await?)
+    }
+
+    /// Which alias services have a token saved, as JSON `{service: bool}`.
+    async fn forwarder_tokens(&self) -> Result<String, Error> {
+        Ok(self.vault.forwarder_tokens(self.scope).await?)
+    }
+
+    /// An item's passkeys, as JSON (no keys).
+    async fn passkeys(&self, id: String) -> Result<String, Error> {
+        Ok(self.vault.passkeys(self.scope, &id).await?)
+    }
+
+    async fn delete_passkey(&self, id: String, credential_id: String) -> Result<(), Error> {
+        Ok(self.vault.delete_passkey(self.scope, &id, &credential_id).await?)
+    }
+
+    /// Emergency contacts both ways, as JSON.
+    async fn emergency_contacts(&self) -> Result<String, Error> {
+        Ok(self.vault.emergency_contacts(self.scope).await?)
+    }
+
+    /// An emergency-access action on contact `arg` (or `invite` with an email and the
+    /// wait in days); returns a fingerprint phrase for `fingerprint` and `me`.
+    async fn emergency(&self, action: String, arg: String, days: u32) -> Result<String, Error> {
+        Ok(self.vault.emergency(self.scope, &action, &arg, days).await?)
+    }
+
+    /// Opens a grantor's vault for viewing; its listing as JSON.
+    async fn view_emergency(&self, id: String) -> Result<String, Error> {
+        Ok(self.vault.view_emergency(self.scope, &id).await?)
+    }
+
+    /// One field of an item in the open grantor's vault.
+    async fn emergency_reveal(&self, id: String, field: String) -> Result<String, Error> {
+        Ok(self.vault.emergency_reveal(self.scope, &id, &field).await?.expose().to_string())
+    }
+
+    /// Copies the n-th value of the generator history; returns the seconds until cleared.
+    async fn copy_generated(&self, index: u32) -> Result<u32, Error> {
+        Ok(self.vault.copy_generated(self.scope, index).await?)
+    }
+
+    /// What the generators made while the vault was open: JSON `[{what, value, when}]`.
+    async fn generator_history(&self) -> Result<String, Error> {
+        Ok(self.vault.generator_history(self.scope).await?)
     }
 
     /// Creates a login from a JSON draft; returns its id.
@@ -243,6 +362,65 @@ impl Service {
 
     async fn restore(&self, id: String) -> Result<(), Error> {
         Ok(self.vault.trash(self.scope, &id, true).await?)
+    }
+
+    /// `ids` is a JSON list of item ids.
+    async fn trash_items(&self, ids: String) -> Result<(), Error> {
+        Ok(self.vault.trash_many(self.scope, &ids, false).await?)
+    }
+
+    async fn restore_items(&self, ids: String) -> Result<(), Error> {
+        Ok(self.vault.trash_many(self.scope, &ids, true).await?)
+    }
+
+    /// Deletes items in the trash for good.
+    async fn delete_forever(&self, ids: String) -> Result<(), Error> {
+        Ok(self.vault.delete_forever(self.scope, &ids).await?)
+    }
+
+    /// Puts items in a folder; an empty `folder` means none.
+    async fn move_items(&self, ids: String, folder: String) -> Result<(), Error> {
+        Ok(self.vault.move_items(self.scope, &ids, &folder).await?)
+    }
+
+    async fn create_folder(&self, name: String) -> Result<String, Error> {
+        Ok(self.vault.create_folder(self.scope, &name).await?)
+    }
+
+    async fn rename_folder(&self, id: String, name: String) -> Result<(), Error> {
+        Ok(self.vault.rename_folder(self.scope, &id, &name).await?)
+    }
+
+    async fn delete_folder(&self, id: String) -> Result<(), Error> {
+        Ok(self.vault.delete_folder(self.scope, &id).await?)
+    }
+
+    /// An item's old passwords as JSON `[{index, date}]`, newest first.
+    async fn history(&self, id: String) -> Result<String, Error> {
+        Ok(self.vault.history(self.scope, &id).await?)
+    }
+
+    /// Writes an export into `file` (a handle the app opened where the user chose).
+    async fn export(&self, format: String, password: String, file: zbus::zvariant::OwnedFd) -> Result<(), Error> {
+        let file = std::fs::File::from(std::os::fd::OwnedFd::from(file));
+        Ok(self.vault.export(self.scope, &format, &password, file).await?)
+    }
+
+    /// What importing `file` would add, as JSON.
+    async fn import_preview(&self, password: String, file: zbus::zvariant::OwnedFd) -> Result<String, Error> {
+        let file = std::fs::File::from(std::os::fd::OwnedFd::from(file));
+        Ok(self.vault.import_preview(self.scope, &password, file).await?)
+    }
+
+    /// Imports `file`; returns how many items it added.
+    async fn import(&self, password: String, file: zbus::zvariant::OwnedFd) -> Result<u32, Error> {
+        let file = std::fs::File::from(std::os::fd::OwnedFd::from(file));
+        Ok(self.vault.import(self.scope, &password, file).await?)
+    }
+
+    /// Opens a private key that has a passphrase: JSON `{private, public, fingerprint}`.
+    async fn open_ssh_key(&self, private: String, passphrase: String) -> Result<String, Error> {
+        Ok(self.vault.open_ssh_key(self.scope, &private, &passphrase)?)
     }
 
     /// Browser extensions waiting for confirmation (with their codes) and paired ones, as

@@ -3,6 +3,9 @@
 
 mod browser;
 mod clipboard;
+mod extension;
+pub use extension::theme as extension_theme;
+mod icons;
 mod notify;
 pub mod peer;
 mod service;
@@ -12,9 +15,9 @@ mod watch;
 
 use std::fs;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use futures_util::StreamExt;
 use nyx_core::{app, paths};
@@ -27,9 +30,33 @@ use self::vault::Vault;
 
 pub const APP: app::App = app::App { slug: "nyx-passwords", name: "Passwords" };
 
+/// The exit status after an update replaced the binary; the unit starts it again on that
+/// (`RestartForceExitStatus`).
+const UPDATED: i32 = 75;
+
+/// The binary's path and the file this daemon runs from, as at start.
+static BINARY: OnceLock<Option<(PathBuf, (u64, u64))>> = OnceLock::new();
+static RESTART: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+fn file_id(path: &Path) -> Option<(u64, u64)> {
+    fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+}
+
+/// Whether an update has put a new binary where this daemon was started from.
+pub fn replaced() -> bool {
+    let Some(Some((path, running))) = BINARY.get() else { return false };
+    file_id(path).is_some_and(|now| now != *running)
+}
+
+/// Stops the daemon (locking first) so that it starts again on the new binary.
+pub fn restart() {
+    RESTART.notify_one();
+}
+
 pub fn run() -> ! {
     app::init(APP);
     harden();
+    BINARY.get_or_init(|| Some((std::env::current_exe().ok()?, file_id(Path::new("/proc/self/exe"))?)));
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("tokio runtime");
     let code = runtime.block_on(serve());
     std::process::exit(code)
@@ -87,21 +114,25 @@ async fn serve() -> i32 {
 
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
     let mut int = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).expect("SIGINT handler");
-    loop {
+    let code = loop {
         tokio::select! {
             accepted = listener.accept() => {
                 if let Ok((stream, _)) = accepted {
                     tokio::spawn(connection(stream, vault.clone(), allowed.clone()));
                 }
             }
-            _ = term.recv() => break,
-            _ = int.recv() => break,
+            _ = term.recv() => break 0,
+            _ = int.recv() => break 0,
+            _ = RESTART.notified() => {
+                eprintln!("nyx-passwordsd: updated; starting again on the new build");
+                break UPDATED;
+            }
         }
-    }
+    };
     // Stopping locks: keys dropped, a copy still on the clipboard cleared.
     vault.lock().await;
     let _ = fs::remove_file(&socket);
-    0
+    code
 }
 
 /// Serves one peer until it disconnects. A peer that isn't one of ours is closed

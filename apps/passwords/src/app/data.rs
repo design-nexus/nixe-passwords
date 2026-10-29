@@ -152,9 +152,26 @@ pub fn ago(epoch: u64) -> String {
     }
 }
 
+/// "Oct 20, 2026" for a date the server sent (ISO 8601); `None` if it isn't one.
+pub fn date(iso: &str) -> Option<String> {
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let mut parts = iso.get(..10)?.split('-');
+    let year: u32 = parts.next()?.parse().ok()?;
+    let month: usize = parts.next()?.parse().ok()?;
+    let day: u32 = parts.next()?.parse().ok()?;
+    Some(format!("{} {day}, {year}", MONTHS.get(month.checked_sub(1)?)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dates() {
+        assert_eq!(date("2026-10-20T01:37:14.000Z").as_deref(), Some("Oct 20, 2026"));
+        assert_eq!(date("2026-13-01"), None);
+        assert_eq!(date(""), None);
+    }
 
     fn entry() -> Entry {
         Entry {

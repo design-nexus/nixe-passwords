@@ -298,6 +298,41 @@ impl Keys {
         serde_json::to_value(&rewrapped).ok().and_then(|v| v.as_str().map(str::to_string)).ok_or(CryptoError::Encrypt)
     }
 
+    /// The user key, encrypted for another device's public key (base64 SPKI DER), to
+    /// approve its request to sign in.
+    pub fn share_user_key(&self, their_public: &str) -> Result<String> {
+        let public = public_key(their_public)?;
+        let ctx = self.store.context();
+        let shared = bw::UnsignedSharedKey::encapsulate(Symmetric::User, &public, &ctx).map_err(|_| CryptoError::Encrypt)?;
+        Ok(shared.to_string())
+    }
+
+    /// Another account's keys, from its user key encrypted for this account's public key
+    /// (emergency access): opened with this account's private key into keys of their own.
+    pub fn open_shared(&self, shared: &str, their_private_key: Option<&str>) -> Result<Keys> {
+        let shared = bw::UnsignedSharedKey::from_str(shared).map_err(|_| CryptoError::Malformed)?;
+        let key = {
+            let mut ctx = self.store.context_mut();
+            if !ctx.has_private_key(Private::User) {
+                return Err(CryptoError::MissingKey);
+            }
+            let local = shared.decapsulate(Private::User, &mut ctx).map_err(|_| CryptoError::Decrypt)?;
+            #[allow(deprecated)] // copied into the other account's own store, dropped with it
+            let key = ctx.dangerous_get_symmetric_key(local).map_err(|_| CryptoError::MissingKey)?.clone();
+            key
+        };
+        let keys = Keys { store: bw::KeyStore::default() };
+        {
+            let mut ctx = keys.store.context_mut();
+            let local = ctx.add_local_symmetric_key(key);
+            ctx.persist_symmetric_key(local, Symmetric::User).map_err(|_| CryptoError::MissingKey)?;
+        }
+        if let Some(private) = their_private_key {
+            keys.add_private_key(private)?;
+        }
+        Ok(keys)
+    }
+
     /// Drops every key. The vault is locked afterwards.
     pub fn lock(&self) {
         self.store.clear();
@@ -382,6 +417,133 @@ impl ItemKey<'_> {
         let enc: bw::EncString = plain.encrypt(&mut self.ctx, self.key).map_err(|_| CryptoError::Encrypt)?;
         serde_json::to_value(&enc).ok().and_then(|v| v.as_str().map(str::to_string)).ok_or(CryptoError::Encrypt)
     }
+}
+
+/// The key of a password-protected export, in Bitwarden's format: the password run
+/// through the KDF with the export's salt (its base64 text, as the official clients
+/// use it), then stretched as a PIN key is.
+pub struct ExportKey(bw::PinKey);
+
+impl ExportKey {
+    /// Slow by design (call it off the UI thread).
+    pub fn derive(password: &Secret, salt: &str, kdf: &Kdf) -> Result<ExportKey> {
+        bw::PinKey::derive(password.expose().as_bytes(), salt.as_bytes(), &kdf.to_bw()?)
+            .map(ExportKey)
+            .map_err(|_| CryptoError::KdfParameters)
+    }
+
+    pub fn encrypt(&self, plain: &str) -> Result<String> {
+        use bitwarden_crypto::KeyEncryptable;
+        let enc: bw::EncString = plain.to_string().encrypt_with_key(&self.0).map_err(|_| CryptoError::Encrypt)?;
+        Ok(enc.to_string())
+    }
+
+    pub fn decrypt(&self, value: &str) -> Result<Secret> {
+        use bitwarden_crypto::KeyDecryptable;
+        let enc = bw::EncString::parse_strict(value).map_err(|_| CryptoError::Malformed)?;
+        let plain: String = enc.decrypt_with_key(&self.0).map_err(|_| CryptoError::WrongPassword)?;
+        Ok(Secret::new(plain))
+    }
+}
+
+fn public_key(b64: &str) -> Result<bw::PublicKey> {
+    let der = bitwarden_encoding::B64::try_from(b64.to_string()).map_err(|_| CryptoError::Malformed)?;
+    bw::PublicKey::from_der(&bw::SpkiPublicKeyBytes::from(der.as_bytes().to_vec())).map_err(|_| CryptoError::Malformed)
+}
+
+/// The words both devices show for a sign-in request, so the user can tell it's the same
+/// request: Bitwarden's fingerprint phrase of the account's email and the requesting
+/// device's public key.
+pub fn fingerprint_phrase(email: &str, public: &str) -> Result<String> {
+    let der = bitwarden_encoding::B64::try_from(public.to_string()).map_err(|_| CryptoError::Malformed)?;
+    bw::fingerprint(email, &bw::SpkiPublicKeyBytes::from(der.as_bytes().to_vec())).map_err(|_| CryptoError::Malformed)
+}
+
+/// This device's side of "sign in with another device": a key pair made for one request.
+/// The approving device sends the user key encrypted for its public key.
+pub struct DeviceRequest(Option<bw::PrivateKey>);
+
+impl DeviceRequest {
+    /// A new key pair and its public key (base64 SPKI DER).
+    pub fn new() -> Result<(DeviceRequest, String)> {
+        let private = bw::PrivateKey::make(bw::PublicKeyEncryptionAlgorithm::RsaOaepSha1);
+        let der = private.to_public_key().to_der().map_err(|_| CryptoError::Encrypt)?;
+        let public = bitwarden_encoding::B64::from(der.as_ref().to_vec()).to_string();
+        Ok((DeviceRequest(Some(private)), public))
+    }
+
+    /// The keys, from the user key the other device sent; the request's key pair is used
+    /// up. The account's private key must open with it, or it isn't this account's key.
+    pub fn open(&mut self, shared: &str, wrapped_private_key: &str) -> Result<Keys> {
+        let private = self.0.take().ok_or(CryptoError::MissingKey)?;
+        let shared = bw::UnsignedSharedKey::from_str(shared).map_err(|_| CryptoError::Malformed)?;
+        let keys = Keys { store: bw::KeyStore::default() };
+        {
+            let mut ctx = keys.store.context_mut();
+            let request = ctx.add_local_private_key(private);
+            let user = shared.decapsulate(request, &mut ctx).map_err(|_| CryptoError::Decrypt)?;
+            ctx.persist_symmetric_key(user, Symmetric::User).map_err(|_| CryptoError::MissingKey)?;
+        }
+        keys.add_private_key(wrapped_private_key)?;
+        Ok(keys)
+    }
+}
+
+/// SHA-256, for WebAuthn's relying-party id hash and client data hash.
+pub fn sha256(data: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(data).into()
+}
+
+/// A new passkey key (ES256: P-256), as the official clients store it in `keyValue`:
+/// PKCS#8, base64url without padding. Also its public key's x and y.
+pub fn passkey_key() -> Result<(Secret, [u8; 32], [u8; 32])> {
+    use base64::Engine;
+    use p256::elliptic_curve::Generate;
+    use p256::pkcs8::EncodePrivateKey;
+    let key = p256::SecretKey::generate_from_rng(&mut rand::rng());
+    let der = key.to_pkcs8_der().map_err(|_| CryptoError::Encrypt)?;
+    let stored = Secret::new(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(der.as_bytes()));
+    let (x, y) = passkey_point(&key)?;
+    Ok((stored, x, y))
+}
+
+fn passkey_secret(stored: &Secret) -> Result<p256::SecretKey> {
+    use base64::Engine;
+    use p256::pkcs8::DecodePrivateKey;
+    let text = stored.expose().trim_end_matches('=');
+    let der = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(text)
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(text))
+        .map_err(|_| CryptoError::Malformed)?;
+    p256::SecretKey::from_pkcs8_der(&der).map_err(|_| CryptoError::Malformed)
+}
+
+fn passkey_point(key: &p256::SecretKey) -> Result<([u8; 32], [u8; 32])> {
+    use p256::elliptic_curve::sec1::ToSec1Point;
+    let point = key.public_key().to_sec1_point(false);
+    let (x, y) = (point.x().ok_or(CryptoError::Malformed)?, point.y().ok_or(CryptoError::Malformed)?);
+    Ok(((*x).into(), (*y).into()))
+}
+
+/// A stored passkey key's public key: x and y.
+pub fn passkey_public(stored: &Secret) -> Result<([u8; 32], [u8; 32])> {
+    passkey_point(&passkey_secret(stored)?)
+}
+
+/// The ES256 signature (DER, as WebAuthn wants it) of `data` with a stored passkey key.
+pub fn passkey_sign(stored: &Secret, data: &[u8]) -> Result<Vec<u8>> {
+    use p256::ecdsa::signature::Signer;
+    let signing = p256::ecdsa::SigningKey::from(passkey_secret(stored)?);
+    let signature: p256::ecdsa::Signature = signing.sign(data);
+    Ok(signature.to_der().as_bytes().to_vec())
+}
+
+/// A fresh salt for an export: 16 random bytes, base64.
+pub fn export_salt() -> String {
+    let mut bytes = [0u8; 16];
+    rand::Rng::fill_bytes(&mut rand::rng(), &mut bytes);
+    bitwarden_encoding::B64::from(bytes.to_vec()).to_string()
 }
 
 /// A browser extension's pairing key (docs/NATIVE_MESSAGING.md).

@@ -22,6 +22,12 @@ const REGEX_SIZE: usize = 1 << 16;
 /// Whether `item_uri` (as saved, under `rule`; `None` is the default, base domain)
 /// matches the page at `page`.
 pub fn matches(rule: Option<i64>, item_uri: &str, page: &Url) -> bool {
+    matches_in(rule, item_uri, page, &[])
+}
+
+/// As `matches`, with the account's equivalent domains: groups of base domains that
+/// count as one site under the base-domain rule (Bitwarden's "equivalent domains").
+pub fn matches_in(rule: Option<i64>, item_uri: &str, page: &Url, equivalent: &[Vec<String>]) -> bool {
     let item_uri = item_uri.trim();
     if item_uri.is_empty() || !matches!(page.scheme(), "http" | "https") {
         return false;
@@ -31,7 +37,10 @@ pub fn matches(rule: Option<i64>, item_uri: &str, page: &Url) -> bool {
     }
     match rule.unwrap_or(DOMAIN) {
         DOMAIN => match (web_url(item_uri), page.host_str()) {
-            (Some(item), Some(page_host)) => item.host_str().is_some_and(|h| base_domain(h) == base_domain(page_host)),
+            (Some(item), Some(page_host)) => item.host_str().is_some_and(|h| {
+                let (item, page) = (base_domain(h), base_domain(page_host));
+                item == page || equivalent.iter().any(|g| g.contains(&item) && g.contains(&page))
+            }),
             _ => false,
         },
         HOST => match web_url(item_uri) {
@@ -74,9 +83,36 @@ pub fn base_domain(host: &str) -> String {
     }
 }
 
+/// Whether a page may use passkeys for `rp_id` (WebAuthn's rule): the page is https
+/// (or `localhost`), and the id is its host or a domain its host is under, never a
+/// public suffix like `co.uk` or `github.io`.
+pub fn valid_rp_id(rp_id: &str, page: &Url) -> bool {
+    let Some(host) = page.host_str().map(str::to_ascii_lowercase) else { return false };
+    let rp_id = rp_id.trim_end_matches('.').to_ascii_lowercase();
+    if page.scheme() != "https" && host != "localhost" {
+        return false;
+    }
+    if rp_id.is_empty() || !(host == rp_id || host.ends_with(&format!(".{rp_id}"))) {
+        return false;
+    }
+    host == "localhost" || psl::suffix_str(&rp_id) != Some(rp_id.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn passkey_sites() {
+        let p = page("https://login.example.co.uk/x");
+        assert!(valid_rp_id("login.example.co.uk", &p) && valid_rp_id("example.co.uk", &p));
+        assert!(!valid_rp_id("co.uk", &p) && !valid_rp_id("uk", &p) && !valid_rp_id("other.co.uk", &p));
+        assert!(!valid_rp_id("ample.co.uk", &p), "a suffix of the name, not of the domain");
+        assert!(!valid_rp_id("example.co.uk", &page("http://login.example.co.uk/")));
+        assert!(valid_rp_id("localhost", &page("http://localhost:8080/")));
+        assert!(!valid_rp_id("github.io", &page("https://alice.github.io/")));
+        assert!(valid_rp_id("alice.github.io", &page("https://alice.github.io/")));
+    }
 
     fn page(u: &str) -> Url {
         Url::parse(u).unwrap()
@@ -105,6 +141,18 @@ mod tests {
         assert!(!matches(None, "https://alice.github.io", &page("https://mallory.github.io/")));
         assert!(!matches(None, "androidapp://com.github.android", &p));
         assert!(!matches(None, "", &p));
+    }
+
+    #[test]
+    fn equivalent_domains() {
+        let groups = vec![vec!["apple.com".to_string(), "icloud.com".to_string()]];
+        let p = page("https://www.icloud.com/");
+        assert!(matches_in(None, "https://appleid.apple.com", &p, &groups));
+        assert!(!matches(None, "https://appleid.apple.com", &p));
+        // Only the base-domain rule widens; the others stay exact.
+        assert!(!matches_in(Some(HOST), "https://www.apple.com", &p, &groups));
+        assert!(!matches_in(None, "https://apple.com.evil.example", &p, &groups));
+        assert!(!matches_in(None, "https://apple.com", &page("http://icloud.com/"), &groups));
     }
 
     #[test]

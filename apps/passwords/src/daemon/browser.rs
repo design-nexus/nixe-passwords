@@ -10,9 +10,11 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
 use nyx_passwords_core::crypto::{self, PairKey};
 use nyx_passwords_core::edit::{LoginDraft, Place};
 use nyx_passwords_core::matching;
+use nyx_passwords_core::model::Kind;
 use nyx_passwords_core::secret::Secret;
 use nyx_passwords_core::store::Pairing;
 use nyx_passwords_core::vault::{Field, reveal_for_use};
@@ -63,6 +65,11 @@ pub struct Context {
 }
 
 impl Browser {
+    /// Whether a pairing may fill, copy or change one more thing this minute.
+    pub fn fills_left(&mut self, pairing: &str) -> bool {
+        self.active.get_mut(pairing).is_some_and(|a| within(&mut a.fills, FILLS_PER_MINUTE))
+    }
+
     /// On lock: keys and the active tab go; confirmed pairings stay stored.
     pub fn lock(&mut self) {
         self.pending.clear();
@@ -158,30 +165,126 @@ impl Vault {
         let (Some(p), Some(n), Some(c)) = (msg["p"].as_str(), msg["n"].as_u64(), msg["c"].as_str().and_then(unb64)) else {
             return json!({"t": "error", "error": "malformed"});
         };
-        let mut st = self.state.lock().await;
-        let st = &mut *st;
-        if st.browser.pending.iter().any(|x| x.id == p && x.at.elapsed() < PENDING_FOR) {
-            return json!({"t": "pending"});
-        }
-        let Some(active) = st.browser.active.get_mut(p) else {
-            let stored = st.store.pairings().ok().is_some_and(|all| all.iter().any(|x| x.id == p));
-            return json!({"t": if stored && st.session.is_none() { "locked" } else { "unknown" }});
+        let request = {
+            let mut st = self.state.lock().await;
+            let st = &mut *st;
+            if st.browser.pending.iter().any(|x| x.id == p && x.at.elapsed() < PENDING_FOR) {
+                return json!({"t": "pending"});
+            }
+            let Some(active) = st.browser.active.get_mut(p) else {
+                let stored = st.store.pairings().ok().is_some_and(|all| all.iter().any(|x| x.id == p));
+                return json!({"t": if stored && st.session.is_none() { "locked" } else { "unknown" }});
+            };
+            // A pairing belongs to one extension, and counters only go up, near the clock.
+            let now = now_ms();
+            if active.pairing.extension != extension || n <= active.last || n.abs_diff(now) > CLOCK_SKEW_MS {
+                return json!({"t": "error", "error": "rejected"});
+            }
+            let Ok(plain) = active.key.open(format!("{p}|{n}").as_bytes(), &c) else {
+                return json!({"t": "error", "error": "rejected"});
+            };
+            active.last = n;
+            serde_json::from_slice::<Value>(plain.expose()).unwrap_or(Value::Null)
         };
-        // A pairing belongs to one extension, and counters only go up, near the clock.
-        let now = now_ms();
-        if active.pairing.extension != extension || n <= active.last || n.abs_diff(now) > CLOCK_SKEW_MS {
-            return json!({"t": "error", "error": "rejected"});
-        }
-        let Ok(plain) = active.key.open(format!("{p}|{n}").as_bytes(), &c) else {
-            return json!({"t": "error", "error": "rejected"});
-        };
-        active.last = n;
-        let request: Value = serde_json::from_slice(plain.expose()).unwrap_or(Value::Null);
-        let answer = if request["r"] == "save" { save(st, p, &request).await } else { handle(st, p, browser, &request) };
+        let answer = self.answer(p, browser, &request).await;
+        let st = self.state.lock().await;
         let Some(active) = st.browser.active.get(p) else { return json!({"t": "unknown"}) };
         match active.key.seal(format!("{p}|{n}|r").as_bytes(), answer.to_string().as_bytes()) {
             Ok(sealed) => json!({"t": "msg", "p": p, "n": n, "c": b64(&sealed)}),
             Err(_) => json!({"t": "error", "error": "seal"}),
+        }
+    }
+
+    /// Answers one opened request. Copies and usernames run without the vault lock held
+    /// (the clipboard and alias services take their time).
+    async fn answer(&self, pairing: &str, browser: &(i32, String), request: &Value) -> Value {
+        match request["r"].as_str().unwrap_or_default() {
+            "save" => save(&mut *self.state.lock().await, pairing, request).await,
+            "add_uri" | "signin.save" | "passkey.create" => {
+                super::extension::edit(&mut *self.state.lock().await, pairing, request).await
+            }
+            "copy" => self.browser_copy(pairing, request).await,
+            "icon" => self.browser_icon(request).await,
+            "lock" => {
+                self.lock().await;
+                json!({})
+            }
+            "username" => {
+                let site = request["url"].as_str().unwrap_or_default();
+                match self.generate_username(Scope::Browser, site).await {
+                    Ok(made) => json!({"username": made.expose()}),
+                    Err(f) => json!({"error": f.kind.short(), "message": f.message}),
+                }
+            }
+            _ => handle(&mut *self.state.lock().await, pairing, browser, request),
+        }
+    }
+
+    /// A site's icon for the popup, as a data URL: only for sites the vault has an item
+    /// for, so the extension can't use the server's icon service for anything else.
+    async fn browser_icon(&self, request: &Value) -> Value {
+        let host = request["host"].as_str().unwrap_or_default().trim_start_matches("www.").to_ascii_lowercase();
+        {
+            let st = self.state.lock().await;
+            let Some(session) = st.session.as_ref() else { return error(Code::Locked) };
+            if host.is_empty() || !session.view.entries.iter().any(|e| e.host.as_deref() == Some(host.as_str())) {
+                return error(Code::NotFound);
+            }
+        }
+        match self.icon(Scope::App, &host).await {
+            Ok(bytes) => {
+                let kind = if bytes.starts_with(b"\x89PNG") {
+                    "image/png"
+                } else if bytes.starts_with(b"\xff\xd8") {
+                    "image/jpeg"
+                } else if bytes.starts_with(b"GIF8") {
+                    "image/gif"
+                } else if bytes.starts_with(b"RIFF") {
+                    "image/webp"
+                } else {
+                    "image/x-icon"
+                };
+                let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                json!({"url": format!("data:{kind};base64,{data}")})
+            }
+            Err(f) => error(f.kind),
+        }
+    }
+
+    /// Copies a login's username, password or one-time code through the daemon's
+    /// clipboard, which clears it later: the value never reaches the browser.
+    async fn browser_copy(&self, pairing: &str, request: &Value) -> Value {
+        let field = match request["field"].as_str() {
+            Some("username") => Field::Username,
+            Some("password") => Field::Password,
+            Some("totp") => Field::Totp,
+            _ => return error(Code::NoField),
+        };
+        let Some(id) = request["id"].as_str().and_then(|i| parse_id(i).ok()) else { return error(Code::NotFound) };
+        let (value, settings, label) = {
+            let mut st = self.state.lock().await;
+            if !st.browser.fills_left(pairing) {
+                return error(Code::RateLimited);
+            }
+            let settings = st.settings.refresh().clone();
+            let Some(session) = st.session.as_ref() else { return error(Code::Locked) };
+            if field != Field::Username && session.view.get(id).is_some_and(|e| e.reprompt) {
+                return error(Code::Reprompt);
+            }
+            let value = match nyx_passwords_core::vault::reveal(&session.keys, &session.snapshot, id, field) {
+                Ok(v) => v,
+                Err(e) => return error(Failure::from(e).kind),
+            };
+            let label = match field {
+                Field::Username => "Username",
+                Field::Password => "Password",
+                _ => "One-time code",
+            };
+            (value, settings, label)
+        };
+        match self.put_on_clipboard(value, &settings, label).await {
+            Ok(seconds) => json!({"seconds": seconds}),
+            Err(f) => error(f.kind),
         }
     }
 
@@ -268,7 +371,10 @@ fn handle(st: &mut State, pairing: &str, browser: &(i32, String), request: &Valu
                     json!({
                         "id": e.id, "name": e.name.expose(),
                         "username": e.username.as_ref().map(|u| u.expose()).unwrap_or(""),
-                        "has_totp": e.has_totp, "reprompt": e.reprompt,
+                        "has_totp": e.has_totp, "reprompt": e.reprompt, "has_password": e.has_password,
+                        "sign_in_with": super::extension::custom(session, e.id, super::extension::SIGN_IN_WITH),
+                        "has_passkey": !session.passkeys(e.id).unwrap_or_default().is_empty(),
+                        "host": e.host, "favorite": e.favorite,
                     })
                 })
                 .collect();
@@ -276,11 +382,44 @@ fn handle(st: &mut State, pairing: &str, browser: &(i32, String), request: &Valu
         }
         Some(r @ ("fill" | "totp")) => {
             let Some(url) = url() else { return error(Code::NoUrl) };
-            let Some(id) = request["id"].as_str().and_then(|i| parse_id(i).ok()) else { return error(Code::NotFound) };
             let Some(session) = st.session.as_ref() else { return error(Code::Locked) };
-            let Some(entry) = session.view.matching(&url).into_iter().find(|e| e.id == id) else {
+            let on_load = request["trigger"] == "load";
+            // As the page loads: only if that's on, and only the one login made for this
+            // very host (or the last used of several), never one that asks for the
+            // master password.
+            let id = if on_load {
+                if r != "fill" || !st.settings.refresh().fill_on_load {
+                    return error(Code::Denied);
+                }
+                let fit: Vec<&nyx_passwords_core::vault::Entry> = session
+                    .view
+                    .matching(&url)
+                    .into_iter()
+                    .filter(|e| super::extension::fill_on_load_ok(session, e, &url))
+                    .collect();
+                let chosen = match fit.as_slice() {
+                    [one] => Some(one.id),
+                    _ => st.recent.iter().find(|r| fit.iter().any(|e| e.id == **r)).copied(),
+                };
+                match chosen {
+                    Some(id) => id,
+                    None => return error(Code::NotFound),
+                }
+            } else {
+                let Some(id) = request["id"].as_str().and_then(|i| parse_id(i).ok()) else { return error(Code::NotFound) };
+                id
+            };
+            let matched = session.view.matching(&url).into_iter().find(|e| e.id == id);
+            // Another site's login, only when the user picked it in the popup and confirmed.
+            let confirmed = !on_load && request["confirmed"] == true;
+            let entry = match matched {
+                Some(e) => e,
+                None if confirmed => match session.view.get(id).filter(|e| e.kind == Kind::Login && !e.deleted) {
+                    Some(e) => e,
+                    None => return error(Code::NotFound),
+                },
                 // Only an item that belongs to this page, never one named by id alone.
-                return error(Code::Denied);
+                None => return error(Code::Denied),
             };
             // A login form in a frame from another site gets nothing.
             if let Some(frame) = request["frame"].as_str().filter(|f| !f.is_empty()) {
@@ -305,12 +444,14 @@ fn handle(st: &mut State, pairing: &str, browser: &(i32, String), request: &Valu
             // as the official extension does.
             let get =
                 |field| reveal_for_use(&session.keys, &session.snapshot, id, field).ok().map(|s: Secret| s.expose().to_string());
+            let has_totp = entry.has_totp;
             let answer = if r == "fill" {
-                json!({"username": get(Field::Username).unwrap_or_default(), "password": get(Field::Password).unwrap_or_default()})
+                json!({"id": id, "has_totp": has_totp,
+                       "username": get(Field::Username).unwrap_or_default(), "password": get(Field::Password).unwrap_or_default()})
             } else {
-                match get(Field::Totp) {
-                    Some(code) => json!({"code": code}),
-                    None => return error(Code::NoField),
+                match nyx_passwords_core::vault::current_code(&session.keys, &session.snapshot, id) {
+                    Ok(c) => json!({"code": c.code.expose(), "period": c.period, "period_left": c.remaining}),
+                    Err(_) => return error(Code::NoField),
                 }
             };
             st.recent.retain(|r| *r != id);
@@ -318,10 +459,12 @@ fn handle(st: &mut State, pairing: &str, browser: &(i32, String), request: &Valu
             st.last_used = Instant::now();
             answer
         }
-        Some("generate") => match generated(&st.settings.refresh().clone(), None) {
-            Ok(p) => json!({"password": p.expose()}),
-            Err(_) => error(Code::Failed),
-        },
+        Some("generate") => {
+            match generated(&st.settings.refresh().clone(), request.get("rules").map(|r| r.to_string()).as_deref()) {
+                Ok(p) => json!({"password": p.expose()}),
+                Err(_) => error(Code::Failed),
+            }
+        }
         Some("unlock") => {
             if let Some(app) = super::peer::allowed_dir().map(|d| d.join("nyx-passwords")) {
                 let _ = std::process::Command::new(app)
@@ -333,7 +476,7 @@ fn handle(st: &mut State, pairing: &str, browser: &(i32, String), request: &Valu
             }
             json!({})
         }
-        _ => error(Code::Failed),
+        _ => super::extension::read(st, pairing, request),
     }
 }
 
@@ -385,6 +528,7 @@ async fn save(st: &mut State, pairing: &str, request: &Value) -> Value {
                 favorite: entry.favorite,
                 reprompt: entry.reprompt,
                 place: Place { organization: entry.organization, collections: entry.collections.clone() },
+                custom: None,
             };
             session.update_login(&mut st.store, &server, &refresh, id, &draft).await.map(|()| ("updated", id))
         }
@@ -401,6 +545,7 @@ async fn save(st: &mut State, pairing: &str, request: &Value) -> Value {
                 favorite: false,
                 reprompt: false,
                 place: Place::default(),
+                custom: None,
             };
             session.create_login(&mut st.store, &server, &refresh, &draft).await.map(|id| ("created", id))
         }

@@ -84,26 +84,55 @@ Item ids are not secret, but the list reveals usage, so it isn't written to disk
 | `UnlockWithKeyring` | `() → ()` | With the user key saved in the desktop keyring; a stale key is removed and refused |
 | `KeyringUnlock` | `() → b` | Whether a key for unlocking is saved in the keyring |
 | `SetKeyringUnlock` | `(b on) → ()` | On: saves the user key there (the vault must be unlocked). Off: removes it. Signing out and a key change elsewhere remove it too |
+| `SignInWithApiKey` | `(s server, s client_id, s client_secret, s password) → ()` | The API key gets tokens (and new ones later, in place of a refresh token); the master password opens the vault |
+| `RequestDeviceSignIn` | `(s server, s email) → s phrase` | Asks the account's other devices to approve; the phrase is what they show. Vaultwarden accepts it only from a device that signed in to the account before (the device id is kept across sign-outs) |
+| `PollDeviceSignIn` | `() → b` | True once approved and the vault is open; `Failed` when declined or expired |
+| `CancelDeviceSignIn` | `() → ()` | |
+| `SignInRequests` | `() → s` | JSON `[{id, device, ip, created, fingerprint}]`: other devices asking to sign in. The server is asked when the hub announced one, or at most once a minute |
+| `AnswerSignIn` | `(s id, b approve) → ()` | Approving sends the user key encrypted for the requesting device's public key |
 | `VerifyPassword` | `(s password) → ()` | For items that ask for the master password again |
 | `SignOut` | `() → ()` | Removes the account, the local copy and the saved token |
 | `Sync` | `() → ()` | Also allowed for the Settings page |
+| `Revision` | `() → t` | Goes up each time a sync (timed, live or asked for) brings the vault in; the window polls it and lists again when it changes |
+| `Icon` | `(s host) → ay` | A site's icon image, fetched through the server's icon service and kept in daemon memory until the vault locks (never on disk). `Denied` while website icons are off; `NoField` when the site has none |
 | `List` | `() → s` | JSON: account, entries (metadata, with `editable`, `view_password`, `deletable`, `restorable`), folders, collections (with `writable`), organizations |
-| `Reveal` | `(s id, s field) → s` | `username`, `password`, `totp` (the code), `totp_seed`, `notes`, `custom:N`, or a card, identity or SSH key field (`card.number`, …; the list is `nyx_passwords_proto::fields`) |
-| `Fields` | `(s id) → s` | JSON `[{name, label, value, secret}]`: a card's, identity's or SSH key's fields and the custom fields; secret values are left out |
+| `Reveal` | `(s id, s field) → s` | `username`, `password`, `totp` (the code), `totp_seed`, `notes`, `custom:N`, `history:N` (an old password), or a card, identity or SSH key field (`card.number`, …; the list is `nyx_passwords_proto::fields`) |
+| `Totp` | `(s id) → (s code, u period, u seconds_left)` | The current one-time code for the item view's countdown. Asks for the master password on items that want it; doesn't count as use, so an open item doesn't keep the vault from locking |
+| `Fields` | `(s id) → s` | JSON `[{name, label, value, secret, kind}]`: a card's, identity's or SSH key's fields and the custom fields (`kind`: 0 text, 1 hidden, 2 true or false); secret values are left out |
+| `History` | `(s id) → s` | JSON `[{index, date}]`: a login's old passwords, newest first; `Reveal` one with `history:N`. Refused where the organization hides passwords |
+| `GenerateUsername` | `(s site) → s` | From `username_rules` in the settings; `site` (a login's address, may be empty) names the tag or the alias. Alias services get only the site's name, with the token from the keyring |
+| `SetForwarderToken` | `(s service, s token) → ()` | Saves an alias service's API token in the keyring; empty removes it |
+| `ForwarderTokens` | `() → s` | JSON `{service: bool}`: which services have a token |
+| `GeneratorHistory` | `() → s` | JSON `[{what, value, when}]`: generated passwords and usernames since unlocking, newest first (20 at most; memory only) |
+| `CopyGenerated` | `(u index) → u clear_seconds` | |
+| `EmergencyContacts` | `() → s` | JSON `{trusted, granted}`, each `[{id, name, email, status, wait_days, takeover}]`; status `invited`, `accepted`, `confirmed`, `requested`, `approved` |
+| `Emergency` | `(s action, s arg, u days) → s` | `invite` (arg: email; days: the wait, 1–90), `fingerprint` (the contact's phrase, returned), `confirm` (sends the user key encrypted for the contact's public key), `request`, `approve`, `reject`, `remove`, `me` (this account's phrase) |
+| `ViewEmergency` | `(s id) → s` | Opens an approved grantor's vault; its entries as JSON. It stays open in the daemon until the vault locks |
+| `EmergencyReveal` | `(s id, s field) → s` | A field of an item in the open grantor's vault |
 | `GeneratePassword` | `(s rules) → s` | `{"kind":"password",…}` or `{"kind":"passphrase",…}` |
-| `CreateLogin` | `(s draft) → s id` | Draft JSON: name, username, password, totp, uris, notes, folder, favorite, reprompt, organization, collections (an organization item needs at least one collection it can write to) |
+| `CreateLogin` | `(s draft) → s id` | Draft JSON: name, username, password, totp, uris, notes, folder, favorite, reprompt, organization, collections (an organization item needs at least one collection it can write to), custom (`[{name, value, kind, from}]`: the custom fields as edited; left out, they stay as they are. `from` is a field's position in the item; with no `value`, its stored value stays. Linked fields are kept) |
 | `UpdateLogin` | `(s id, s draft) → ()` | A password the organization hides stays as stored |
-| `CreateItem` | `(s draft) → s id` | A note, card, identity or SSH key. Draft JSON: kind (`note`, `card`, `identity`, `ssh`), name, fields (`{"card.number": …}`; one left out is cleared), notes, folder, favorite, reprompt. An SSH key needs only `ssh.privateKey` (OpenSSH, no passphrase); its public key and fingerprint are worked out from it |
+| `CreateItem` | `(s draft) → s id` | A note, card, identity or SSH key. Draft JSON: kind (`note`, `card`, `identity`, `ssh`), name, fields (`{"card.number": …}`; one left out is cleared), notes, folder, favorite, reprompt, custom (as for logins). An SSH key needs only `ssh.privateKey` (OpenSSH, no passphrase); its public key and fingerprint are worked out from it |
 | `UpdateItem` | `(s id, s draft) → ()` | The kind must match the item's. Like `UpdateLogin`, `organization` and `collections` move a personal item into an organization or change an organization item's collections; read-only items are refused with `Denied` |
 | `GenerateSshKey` | `() → s` | A new Ed25519 key: JSON `{private, public, fingerprint}` |
-| `ReadSshKey` | `(s private) → s` | JSON `{public, fingerprint}` for an OpenSSH private key; fails for a key with a passphrase |
+| `ReadSshKey` | `(s private) → s` | JSON `{public, fingerprint}` for an OpenSSH private key; fails for a key with a passphrase ("this key has a passphrase") |
+| `OpenSshKey` | `(s private, s passphrase) → s` | JSON `{private, public, fingerprint}`: the key opened with its passphrase, `private` without it (as items keep keys) |
 | `Report` | `() → s` | JSON `[{id, reused, weak, age_days}]`: logins with a password used by others, weak (zxcvbn below 3), or unchanged for over a year (`age_days` then set). Worked out in memory |
 | `CheckBreaches` | `() → s` | JSON `[{id, count}]`: logins whose password is in Have I Been Pwned's breach data. Sends only 5-character SHA-1 prefixes; the app asks the user first |
 | `Attachments` | `(s id) → s` | JSON `[{id, name, size}]`; `size` is the server's, of the encrypted file |
 | `SaveAttachment` | `(s id, s attachment, h file) → t written` | `file` is a handle to the file the user chose, opened by the app; the daemon decrypts into it. Items that ask for the master password need it first (`Reprompt`) |
 | `AddAttachment` | `(s id, s name, h file) → ()` | `file` is a handle to the file the user picked; at most 100 MB. Read-only items are refused |
 | `DeleteAttachment` | `(s id, s attachment) → ()` | Permanent: attachments don't go to the trash |
+| `Export` | `(s format, s password, h file) → ()` | `json`, `csv`, `password_json` (needs `password`), `account_json`. Personal items, not the trash or attachments. Needs `VerifyPassword` within the last five minutes (`Reprompt` otherwise). `file` is a handle the app opened where the user chose |
+| `ImportPreview` | `(s password, h file) → s` | JSON `{format, items, folders, counts}`; the format is told from the contents. `NeedsPassword` for a protected export without (or with a wrong) password |
+| `Import` | `(s password, h file) → u count` | Adds the items as personal ones (folders made as needed), then syncs |
 | `Trash`, `Restore` | `(s id) → ()` | |
+| `TrashItems`, `RestoreItems` | `(s ids) → ()` | `ids`: a JSON list. Every item must allow it, or nothing is done; the vault syncs afterwards |
+| `DeleteForever` | `(s ids) → ()` | Items in the trash only, deleted for good with their attachments; `Denied` otherwise |
+| `MoveItems` | `(s ids, s folder) → ()` | Into a folder (empty: none); works on organization items too, since folders are the account's own |
+| `CreateFolder` | `(s name) → s id` | |
+| `RenameFolder` | `(s id, s name) → ()` | |
+| `DeleteFolder` | `(s id) → ()` | Its items stay, in no folder |
 
 ## Glimpse behaviour
 

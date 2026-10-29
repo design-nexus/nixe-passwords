@@ -187,19 +187,32 @@ async fn call_one(conn: &zbus::Connection, call: &[Value]) -> Value {
     let method = call[0].as_str().unwrap();
     let s = |i: usize| call[i].as_str().unwrap().to_string();
     let reply = match method {
-        "Status" | "Lock" | "Sync" | "List" | "Generate" | "SignOut" | "Pairings" | "KeyringUnlock" | "UnlockWithKeyring" => {
-            conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &()).await
-        }
+        "Status" | "Lock" | "Sync" | "List" | "Generate" | "SignOut" | "Pairings" | "KeyringUnlock" | "UnlockWithKeyring"
+        | "Revision" | "SignInRequests" | "PollDeviceSignIn" | "GeneratorHistory" | "EmergencyContacts" | "Outdated"
+        | "Restart" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &()).await,
         "Search" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), call[2].as_u64().unwrap() as u32)).await,
-        "Copy" | "Reveal" | "UpdateLogin" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2))).await,
-        "Unlock" | "CreateLogin" | "OpenUrl" | "Trash" | "Restore" | "VerifyPassword" | "ConfirmPairing" | "RemovePairing" => {
-            conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1),)).await
+        "Copy" | "Reveal" | "UpdateLogin" | "MoveItems" | "RenameFolder" | "RequestDeviceSignIn" => {
+            conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2))).await
         }
+        "Unlock" | "CreateLogin" | "OpenUrl" | "Trash" | "Restore" | "VerifyPassword" | "ConfirmPairing" | "RemovePairing"
+        | "Totp" | "GenerateUsername" | "CreateItem" | "CreateFolder" | "DeleteFolder" | "History" | "TrashItems"
+        | "RestoreItems" | "DeleteForever" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1),)).await,
         "SignIn" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2), s(3), 255u8, String::new())).await,
         "Attachments" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1),)).await,
         "SetKeyringUnlock" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(call[1].as_bool().unwrap(),)).await,
         "DeleteAttachment" => conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2))).await,
         // [method, id, name or attachment, path]: the file goes as a handle.
+        // [method, format or password…, path]: the file goes as a handle.
+        "Export" | "ImportPreview" | "Import" => {
+            let path = call.last().unwrap().as_str().unwrap();
+            let file = if method == "Export" { std::fs::File::create(path).unwrap() } else { std::fs::File::open(path).unwrap() };
+            let fd = zbus::zvariant::Fd::from(std::os::fd::AsFd::as_fd(&file));
+            if method == "Export" {
+                conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), s(2), fd)).await
+            } else {
+                conn.call_method(None::<&str>, OBJECT, Some(IFACE), method, &(s(1), fd)).await
+            }
+        }
         "AddAttachment" | "SaveAttachment" => {
             let file =
                 if method == "AddAttachment" { std::fs::File::open(s(3)).unwrap() } else { std::fs::File::create(s(3)).unwrap() };
@@ -219,6 +232,7 @@ async fn call_one(conn: &zbus::Connection, call: &[Value]) -> Value {
                 "t" => json!({"ok": body.deserialize::<u64>().unwrap()}),
                 "b" => json!({"ok": body.deserialize::<bool>().unwrap()}),
                 "ssu" | "(ssu)" => json!({"ok": body.deserialize::<(String, String, u32)>().unwrap()}),
+                "suu" | "(suu)" => json!({"ok": body.deserialize::<(String, u32, u32)>().unwrap()}),
                 "a(ssssbs)" => {
                     json!({"ok": body.deserialize::<Vec<(String, String, String, String, bool, String)>>().unwrap()})
                 }
@@ -237,6 +251,31 @@ fn ok(v: &Value) -> &Value {
 
 fn err(v: &Value) -> &str {
     v["error"].as_str().unwrap_or_else(|| panic!("expected an error, got {v}"))
+}
+
+/// An update replacing the binary: the daemon says so, and only the app can make it
+/// start again on the new one.
+#[test]
+fn updated_binary() {
+    let mut s = Scratch::start("");
+    assert_eq!(ok(&s.as_peer("nyx-passwords", json!([["Outdated"]]))[0]), false);
+    let bin = s.dir.path().join("bin");
+    std::fs::copy(bin.join("nyx-passwordsd"), bin.join("new")).unwrap();
+    std::fs::rename(bin.join("new"), bin.join("nyx-passwordsd")).unwrap();
+    let g = s.as_peer("nyx-glimpse", json!([["Outdated"], ["Restart"]]));
+    assert_eq!(ok(&g[0]), true);
+    assert_eq!(err(&g[1]), "Denied");
+    assert!(s.daemon.try_wait().unwrap().is_none());
+    ok(&s.as_peer("nyx-passwords", json!([["Restart"]]))[0]);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = s.daemon.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "daemon didn't stop");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(status.code(), Some(75));
 }
 
 #[test]
@@ -354,6 +393,56 @@ async fn signed_in_vault() {
     assert_eq!(err(&g[4]), "Denied");
 
     // The app may reveal; then lock, and everything needs unlocking again.
+    // The one-time code comes with its period and the seconds it has left; only the app
+    // gets it this way.
+    let app = s.as_peer("nyx-passwords", json!([["Totp", id]]));
+    let code = ok(&app[0]).as_array().unwrap();
+    assert_eq!(code[0].as_str().unwrap().len(), 6);
+    assert_eq!(code[1], 30);
+    assert!((1..=30).contains(&code[2].as_u64().unwrap()));
+    let g = s.as_peer("nyx-glimpse", json!([["Totp", id]]));
+    assert_eq!(err(&g[0]), "Denied");
+
+    // Folders, history and actions on several items are the app's alone.
+    let ids = json!([id]).to_string();
+    let g = s.as_peer(
+        "nyx-glimpse",
+        json!([["CreateFolder", "x"], ["History", id], ["TrashItems", ids], ["DeleteForever", ids], ["MoveItems", ids, ""]]),
+    );
+    for reply in &g {
+        assert_eq!(err(reply), "Denied", "{reply}");
+    }
+    let g = s.as_peer("nyx-glimpse", json!([["SignInRequests"], ["PollDeviceSignIn"], ["RequestDeviceSignIn", server, email]]));
+    for reply in &g {
+        assert_eq!(err(reply), "Denied", "{reply}");
+    }
+    let app = s.as_peer("nyx-passwords", json!([["SignInRequests"]]));
+    assert_eq!(ok(&app[0]), "[]");
+
+    // The username generator, and the history of what was generated (the app's alone).
+    let app = s.as_peer("nyx-passwords", json!([["GenerateUsername", "https://github.com"], ["GeneratorHistory"]]));
+    let made = ok(&app[0]).as_str().unwrap().to_string();
+    assert!(made.len() > 3 && made.chars().last().unwrap().is_ascii_digit(), "{made}");
+    let history: Value = serde_json::from_str(ok(&app[1]).as_str().unwrap()).unwrap();
+    assert_eq!((history[0]["what"].as_str(), history[0]["value"].as_str()), (Some("username"), Some(made.as_str())));
+    let g = s.as_peer("nyx-glimpse", json!([["GeneratorHistory"], ["GenerateUsername", ""]]));
+    assert_eq!((err(&g[0]), err(&g[1])), ("Denied", "Denied"));
+    let app = s.as_peer("nyx-passwords", json!([["EmergencyContacts"]]));
+    assert_eq!(ok(&app[0]), r#"{"granted":[],"trusted":[]}"#);
+    let g = s.as_peer("nyx-glimpse", json!([["EmergencyContacts"]]));
+    assert_eq!(err(&g[0]), "Denied");
+    let app = s.as_peer("nyx-passwords", json!([["CreateFolder", "Work"], ["History", id], ["DeleteForever", ids]]));
+    let folder = ok(&app[0]).as_str().unwrap().to_string();
+    assert_eq!(ok(&app[1]), "[]");
+    assert_eq!(err(&app[2]), "Denied", "not in the trash");
+    let app = s.as_peer("nyx-passwords", json!([["MoveItems", ids, folder], ["List"]]));
+    let listing: Value = serde_json::from_str(ok(&app[1]).as_str().unwrap()).unwrap();
+    assert_eq!(listing["entries"][0]["folder"], folder.as_str());
+    assert_eq!(listing["folders"][0]["name"], "Work");
+    let app = s.as_peer("nyx-passwords", json!([["DeleteFolder", folder], ["List"]]));
+    let listing: Value = serde_json::from_str(ok(&app[1]).as_str().unwrap()).unwrap();
+    assert!(listing["entries"][0]["folder"].is_null() && listing["folders"] == json!([]));
+
     let app = s.as_peer("nyx-passwords", json!([["Reveal", id, "password"], ["Lock"], ["Search", "git", 5], ["Status"]]));
     assert_eq!(ok(&app[0]), "canary-daemon-Pw!9");
     assert_eq!(err(&app[2]), "Locked");
@@ -371,6 +460,8 @@ async fn signed_in_vault() {
     let bank = ok(&app[0]).as_str().unwrap().to_string();
     let g = s.as_peer("nyx-glimpse", json!([["Copy", bank, "password"], ["Copy", bank, "totp"]]));
     assert_eq!((err(&g[0]), err(&g[1])), ("Reprompt", "Reprompt"));
+    let app = s.as_peer("nyx-passwords", json!([["Totp", bank]]));
+    assert_eq!(err(&app[0]), "Reprompt");
     let app = s.as_peer(
         "nyx-passwords",
         json!([
@@ -531,9 +622,10 @@ fn browser() {
             let salt = [public.as_bytes().as_slice(), &theirs].concat();
             let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(&salt), shared.as_bytes());
             let mut key = [0u8; 32];
-            hk.expand(b"nyx-passwords pair v1", &mut key).unwrap();
+            // The protocol's labels from before the rename, as the extension uses.
+            hk.expand(b"nixe-passwords pair v1", &mut key).unwrap();
             let mut code = [0u8; 4];
-            hk.expand(b"nyx-passwords code v1", &mut code).unwrap();
+            hk.expand(b"nixe-passwords code v1", &mut code).unwrap();
             let code = format!("{:06}", u32::from_be_bytes(code) % 1_000_000);
             std::fs::write(&state_file, json!({"id": reply["p"], "key": b64(&key)}).to_string()).unwrap();
             results.push(json!({"id": reply["p"], "code": code}));
@@ -545,7 +637,9 @@ fn browser() {
         let id = state["id"].as_str().unwrap().to_string();
         let cipher = aes_gcm::Aes256Gcm::new_from_slice(&unb64(state["key"].as_str().unwrap())).unwrap();
         let requests: Vec<Value> = serde_json::from_str(&step).unwrap();
-        let mut counter = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        // As the extension does: the clock, or one more than the last counter if that's later.
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        let mut counter = now.max(state["last"].as_u64().unwrap_or(0));
         let mut last: Option<Value> = None;
         for request in requests {
             let frame = if request["replay"] == true {
@@ -574,6 +668,9 @@ fn browser() {
                 results.push(reply);
             }
         }
+        let mut state = state;
+        state["last"] = counter.into();
+        std::fs::write(&state_file, state.to_string()).unwrap();
     }
     drop(input);
     let _ = child.wait();
@@ -615,7 +712,7 @@ async fn paired_browser() {
     let email = format!("browser-{}@example.com", &uuid::Uuid::new_v4().simple().to_string()[..10]);
     let password = "correct horse browser battery";
     register(&server, &ca, &email, password).await;
-    let s = Scratch::start(&format!("extra_ca = {:?}\n", ca.display().to_string()));
+    let s = Scratch::start(&format!("extra_ca = {:?}\nbrowser_passkeys = true\n", ca.display().to_string()));
     let github = json!({"name": "GitHub", "username": "octo", "password": "canary-gh-Pw!9", "uris": ["https://github.com/login"], "totp": "JBSWY3DPEHPK3PXP"}).to_string();
     let other =
         json!({"name": "Other", "username": "x", "password": "canary-other-Pw!9", "uris": ["https://example.org"]}).to_string();
@@ -656,8 +753,11 @@ async fn paired_browser() {
     let items = r[1]["items"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!((items[0]["name"].as_str(), items[0]["username"].as_str()), (Some("GitHub"), Some("octo")));
-    assert_eq!(r[2], json!({"username": "octo", "password": "canary-gh-Pw!9"}));
+    assert_eq!((r[2]["username"].as_str(), r[2]["password"].as_str()), (Some("octo"), Some("canary-gh-Pw!9")));
+    assert_eq!((r[2]["id"].as_str(), r[2]["has_totp"].as_bool()), (Some(gh.as_str()), Some(true)));
     assert_eq!(r[3]["code"].as_str().unwrap().len(), 6);
+    assert_eq!(r[3]["period"], 30);
+    assert!((1..=30).contains(&r[3]["period_left"].as_u64().unwrap()));
     assert_eq!(r[4]["error"], "Denied", "another site's item");
     assert_eq!(r[5]["error"], "Denied", "a frame from another site");
     assert_eq!(r[6]["username"], "octo", "a frame on the same site");
@@ -675,8 +775,8 @@ async fn paired_browser() {
         ])
         .to_string(),
     );
-    assert_eq!(r[0]["saved"], "created");
-    assert_eq!(r[1]["saved"], "updated");
+    assert_eq!(r[0]["saved"], "created", "{}", r[0]);
+    assert_eq!(r[1]["saved"], "updated", "{}", r[1]);
     assert_eq!(r[0]["id"], r[1]["id"]);
     let saved = r[2]["items"].as_array().unwrap();
     assert_eq!(saved.len(), 1);
@@ -685,6 +785,105 @@ async fn paired_browser() {
     let id_saved = saved[0]["id"].as_str().unwrap().to_string();
     let r = s.as_browser(&json!([{"r": "fill", "url": "https://example.net/", "id": id_saved}]).to_string());
     assert_eq!(r[0]["password"], "canary-changed-Pw!9");
+
+    // The popup, checkout forms, the save prompt, page-load fill and universal sign-on.
+    let card = json!({"kind": "card", "name": "Visa", "fields": {"card.number": "4111111111111111", "card.brand": "Visa", "card.code": "123"}})
+        .to_string();
+    let quiet = json!({"name": "Quiet", "username": "q", "password": "canary-quiet-Pw!9", "uris": ["https://quiet.example/"],
+                       "custom": [{"name": "nyx:no-fill-on-load", "value": "true", "kind": 2}]})
+    .to_string();
+    let app = s.as_peer("nyx-passwords", json!([["CreateItem", card], ["CreateLogin", quiet]]));
+    let card_id = ok(&app[0]).as_str().unwrap().to_string();
+    let r = s.as_browser(&json!([{"r": "fill", "url": "https://quiet.example/", "trigger": "load"}]).to_string());
+    assert_eq!(r[0]["error"], "NotFound", "a login that opted out isn't filled on load");
+    let r = s.as_browser(
+        &json!([
+            {"r": "search", "q": "git"},
+            {"r": "item", "id": gh},
+            {"r": "settings"},
+            {"r": "fill", "url": page, "trigger": "load"},
+            {"r": "fill", "url": "https://gist.github.com/", "trigger": "load"},
+            {"r": "fill", "url": "https://example.org/", "id": gh, "confirmed": true},
+            {"r": "fill", "url": "https://example.org/", "id": gh},
+            {"r": "cards", "url": "https://shop.example/"},
+            {"r": "fill_card", "url": "https://shop.example/", "id": card_id},
+            {"r": "fill_card", "url": "http://shop.example/", "id": card_id},
+            {"r": "check", "url": page, "username": "octo", "password": "canary-gh-Pw!9"},
+            {"r": "check", "url": page, "username": "octo", "password": "something else"},
+            {"r": "check", "url": page, "username": "someone", "password": "x"},
+            {"r": "exclude", "url": "https://nosave.example/"},
+            {"r": "check", "url": "https://nosave.example/x", "username": "a", "password": "b"},
+            {"r": "security", "ids": [gh, other_id]},
+            {"r": "add_uri", "url": "https://github.example/", "id": gh},
+            {"r": "match", "url": "https://github.example/"},
+            {"r": "signin.save", "url": "https://app.example/", "provider": "google", "username": "me@gmail.com"},
+            {"r": "match", "url": "https://app.example/"},
+            {"r": "copy", "id": gh, "field": "password"},
+            {"r": "username", "url": page},
+            {"r": "icon", "host": "elsewhere.example"},
+        ])
+        .to_string(),
+    );
+    assert_eq!(r[0]["items"][0]["name"], "GitHub", "{}", r[0]);
+    assert!(!r[0].to_string().contains("canary"), "search carries no secrets");
+    assert_eq!((r[1]["uris"][0].as_str(), r[1]["has_password"].as_bool()), (Some("https://github.com/login"), Some(true)));
+    assert_eq!((r[2]["fill_on_load"].as_bool(), r[2]["passkeys"].as_bool()), (Some(true), Some(true)));
+    assert!(r[2]["theme"]["accent"].as_str().is_some_and(|c| c.starts_with('#')), "{}", r[2]);
+    assert_eq!(r.last().unwrap()["error"], "NotFound", "icons only for the vault's own sites");
+    assert_eq!(r[3]["password"], "canary-gh-Pw!9", "filled as the page loads");
+    assert_eq!(r[4]["error"], "NotFound", "a base-domain match alone isn't filled on load");
+    assert_eq!(r[5]["username"], "octo", "another site's login, picked and confirmed");
+    assert_eq!(r[6]["error"], "Denied");
+    assert_eq!((r[7]["items"][0]["name"].as_str(), r[7]["items"][0]["sub"].as_str()), (Some("Visa"), Some("Visa •••• 1111")));
+    assert_eq!((r[8]["number"].as_str(), r[8]["code"].as_str()), (Some("4111111111111111"), Some("123")));
+    assert_eq!(r[9]["error"], "Denied", "cards only on https");
+    assert_eq!(r[10]["state"], "same");
+    assert_eq!((r[11]["state"].as_str(), r[11]["id"].as_str()), (Some("changed"), Some(gh.as_str())));
+    assert_eq!(r[12]["state"], "new");
+    assert_eq!(r[14]["state"], "excluded");
+    assert!(r[15]["items"].is_array());
+    assert_eq!(r[16]["id"], gh.as_str());
+    assert_eq!(r[17]["items"][0]["id"], gh.as_str(), "the page's address was added");
+    assert_eq!(r[18]["saved"], "created");
+    assert_eq!(r[19]["items"][0]["sign_in_with"], "google");
+    assert_eq!(r[20]["error"], "Clipboard", "no compositor here; the value isn't sent back");
+    assert!(r[21]["username"].as_str().is_some_and(|u| u.len() > 3), "{}", r[21]);
+
+    // Passkeys: made for the page's site, listed, used; refused for other sites.
+    use base64::Engine;
+    let hash = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7u8; 32]);
+    let wpage = "https://webauthn.example/register";
+    let r = s.as_browser(
+        &json!([
+            {"r": "passkey.create", "url": wpage, "rp_id": "webauthn.example", "rp_name": "W", "user_id": "dXNlcg",
+             "user_name": "octo", "user_display_name": "Octo", "client_data_hash": hash, "confirmed": true},
+            {"r": "passkey.create", "url": wpage, "rp_id": "example", "rp_name": "W", "user_id": "dXNlcg",
+             "user_name": "octo", "client_data_hash": hash, "confirmed": true},
+            {"r": "passkey.create", "url": wpage, "rp_id": "webauthn.example", "user_id": "dXNlcg", "client_data_hash": hash},
+            {"r": "passkey.list", "url": "https://webauthn.example/login", "rp_id": "webauthn.example"},
+            {"r": "passkey.list", "url": "https://evil.example/", "rp_id": "webauthn.example"},
+        ])
+        .to_string(),
+    );
+    let made = &r[0];
+    assert_eq!(made["algorithm"], -7, "{made}");
+    assert_eq!(r[1]["error"], "Denied", "a public suffix");
+    assert_eq!(r[2]["error"], "Denied", "not confirmed by the user");
+    assert_eq!(r[3]["items"][0]["credential_id"], made["credential_id"]);
+    assert_eq!(r[4]["error"], "Denied");
+    let r = s.as_browser(
+        &json!([
+            {"r": "passkey.get", "url": "https://webauthn.example/login", "rp_id": "webauthn.example", "id": made["id"],
+             "credential_id": made["credential_id"], "client_data_hash": hash, "confirmed": true},
+            {"r": "passkey.get", "url": "https://webauthn.example/login", "rp_id": "webauthn.example", "id": made["id"],
+             "credential_id": made["credential_id"], "client_data_hash": hash},
+        ])
+        .to_string(),
+    );
+    assert_eq!(r[0]["user_handle"], "dXNlcg");
+    let data = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(r[0]["authenticator_data"].as_str().unwrap()).unwrap();
+    assert_eq!((data.len(), data[32] & 1), (37, 1), "user present");
+    assert_eq!(r[1]["error"], "Denied");
 
     // No secret ever came back in clear.
     for reply in &r {
@@ -759,4 +958,205 @@ async fn keyring_unlock() {
     assert_eq!(ok(&app[2]), false);
     assert_eq!(err(&app[3]), "Failed");
     assert_eq!(ok(&app[4])[0], "locked");
+}
+
+/// Live sync: a change made on another device reaches the daemon through the server's
+/// notification hub, without asking it to sync; `Revision` goes up for the window.
+#[tokio::test]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
+async fn live_sync() {
+    use nyx_passwords_core::api::Server;
+    use nyx_passwords_core::edit::{LoginDraft, Place};
+    use nyx_passwords_core::secret::Secret;
+    use nyx_passwords_core::session::{self, SignIn};
+    use nyx_passwords_core::store::Store;
+
+    let (server, ca) = test_server().expect("NYX_PW_TEST_SERVER and NYX_PW_TEST_CA");
+    let email = format!("live-{}@example.com", &uuid::Uuid::new_v4().simple().to_string()[..10]);
+    let password = "correct horse live battery";
+    register(&server, &ca, &email, password).await;
+    let s = Scratch::start(&format!("extra_ca = {:?}\nsync_minutes = 0\n", ca.display().to_string()));
+    let app = s.as_peer("nyx-passwords", json!([["SignIn", server, email, password], ["Revision"]]));
+    assert_eq!(ok(&app[0])[0], true);
+    let before = ok(&app[1]).as_u64().unwrap();
+
+    // Another device: its own session, its own device id.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(&dir.path().join("vault.sqlite")).unwrap();
+    let remote = Server::new(&server, &[std::fs::read(&ca).unwrap()]).unwrap();
+    let SignIn::Done(mut other) =
+        session::sign_in(&mut store, &remote, &email, &Secret::new(password), "elsewhere", None).await.unwrap()
+    else {
+        panic!("two-step login")
+    };
+    let refresh = Secret::new(other.refresh_token().unwrap().expose());
+    // Give the daemon's hub connection time to come up (it starts 5 s after unlocking).
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    let draft = LoginDraft {
+        name: Secret::new("Made elsewhere"),
+        username: None,
+        password: Some(Secret::new("canary-elsewhere-Pw!9")),
+        totp: None,
+        uris: vec![],
+        notes: None,
+        folder: None,
+        favorite: false,
+        reprompt: false,
+        place: Place::default(),
+        custom: None,
+    };
+    other.create_login(&mut store, &remote, &refresh, &draft).await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let app = s.as_peer("nyx-passwords", json!([["Revision"], ["List"]]));
+        let listing = ok(&app[1]).as_str().unwrap().to_string();
+        if ok(&app[0]).as_u64().unwrap() > before && listing.contains("Made elsewhere") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the change didn't arrive: {listing}");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// Export and import through the daemon: the file goes by handle; exporting needs the
+/// master password confirmed, and a protected export asks for its password.
+#[tokio::test]
+#[ignore = "needs NYX_PW_TEST_SERVER"]
+async fn export_and_import() {
+    let (server, ca) = test_server().expect("NYX_PW_TEST_SERVER and NYX_PW_TEST_CA");
+    let email = format!("transfer-{}@example.com", &uuid::Uuid::new_v4().simple().to_string()[..10]);
+    let password = "correct horse transfer battery";
+    register(&server, &ca, &email, password).await;
+    let s = Scratch::start(&format!("extra_ca = {:?}\n", ca.display().to_string()));
+    let draft = json!({"name": "GitHub", "username": "octo", "password": "canary-transfer-Pw!9", "uris": ["https://github.com"]})
+        .to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let file = |name: &str| dir.path().join(name).display().to_string();
+    let app = s.as_peer(
+        "nyx-passwords",
+        json!([["SignIn", server, email, password], ["CreateLogin", draft], ["Export", "json", "", file("refused.json")]]),
+    );
+    assert_eq!(err(&app[2]), "Reprompt", "the master password first");
+    let app = s.as_peer(
+        "nyx-passwords",
+        json!([
+            ["VerifyPassword", password],
+            ["Export", "json", "", file("plain.json")],
+            ["Export", "password_json", "file pw", file("protected.json")],
+            ["ImportPreview", "", file("plain.json")],
+            ["ImportPreview", "", file("protected.json")],
+            ["ImportPreview", "file pw", file("protected.json")],
+            ["Import", "file pw", file("protected.json")],
+            ["List"],
+        ]),
+    );
+    for reply in &app[..3] {
+        assert!(reply.get("ok").is_some(), "{reply}");
+    }
+    assert!(std::fs::read_to_string(file("plain.json")).unwrap().contains("canary-transfer-Pw!9"));
+    assert!(!std::fs::read_to_string(file("protected.json")).unwrap().contains("canary"));
+    let preview: Value = serde_json::from_str(ok(&app[3]).as_str().unwrap()).unwrap();
+    assert_eq!((preview["items"].as_u64(), preview["counts"]["login"].as_u64()), (Some(1), Some(1)));
+    assert_eq!(err(&app[4]), "NeedsPassword");
+    assert_eq!(ok(&app[6]), 1);
+    let listing: Value = serde_json::from_str(ok(&app[7]).as_str().unwrap()).unwrap();
+    assert_eq!(listing["entries"].as_array().unwrap().len(), 2);
+    let g = s.as_peer("nyx-glimpse", json!([["Export", "json", "", file("glimpse.json")]]));
+    assert_eq!(err(&g[0]), "Denied");
+}
+
+/// The extension in a real, headless Firefox (`browser/test/firefox-e2e.mjs`), against
+/// this scratch daemon: pairing, filling as a page loads, the menu under a card field,
+/// the save bar after signing up, and making and using a passkey. Needs Firefox and
+/// Node, and the extension unpacked at NYX_PW_TEST_FIREFOX. No window is shown.
+#[tokio::test]
+#[ignore = "needs NYX_PW_TEST_SERVER and NYX_PW_TEST_FIREFOX"]
+async fn firefox_extension() {
+    let (server, ca) = test_server().expect("NYX_PW_TEST_SERVER and NYX_PW_TEST_CA");
+    let ext = std::env::var("NYX_PW_TEST_FIREFOX").expect("NYX_PW_TEST_FIREFOX: the unpacked Firefox extension");
+    let email = format!("firefox-{}@example.com", &uuid::Uuid::new_v4().simple().to_string()[..10]);
+    let password = "correct horse firefox battery";
+    register(&server, &ca, &email, password).await;
+    let s = Scratch::start(&format!("extra_ca = {:?}\nbrowser_passkeys = true\n", ca.display().to_string()));
+    let port = loop {
+        let p = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        if p < 65000 && std::net::TcpListener::bind(("127.0.0.1", p + 1)).is_ok() {
+            break p;
+        }
+    };
+    let login = json!({"name": "Local test", "username": "octo", "password": "canary-local-Pw!9",
+                       "uris": [format!("https://127.0.0.1:{port}/login")]})
+    .to_string();
+    let card = json!({"kind": "card", "name": "Visa",
+                      "fields": {"card.cardholderName": "O. Cat", "card.number": "4111111111111111", "card.code": "123"}})
+    .to_string();
+    let app =
+        s.as_peer("nyx-passwords", json!([["SignIn", server, email, password], ["CreateLogin", login], ["CreateItem", card]]));
+    assert_eq!(ok(&app[0])[0], true);
+
+    let hosts = s.dir.path().join(".mozilla/native-messaging-hosts");
+    std::fs::create_dir_all(&hosts).unwrap();
+    let manifest = json!({"name": "io.github.design_nexus.nyx.passwords", "description": "Nyx Passwords",
+                          "path": s.dir.path().join("bin/nyx-passwords-bridge"), "type": "stdio",
+                          "allowed_extensions": ["nyx-passwords@design-nexus.github.io"]});
+    std::fs::write(hosts.join("io.github.design_nexus.nyx.passwords.json"), manifest.to_string()).unwrap();
+    let data = ca.parent().unwrap().join("data");
+    let mut node = Command::new("node")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("browser/test/firefox-e2e.mjs"))
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("DISPLAY")
+        .env_remove("DBUS_SESSION_BUS_ADDRESS")
+        .env("HOME", s.dir.path())
+        .env("XDG_RUNTIME_DIR", s.dir.path().join("run"))
+        .env("NYX_E2E_EXT", &ext)
+        .env("NYX_E2E_PROFILE", s.dir.path().join("firefox-profile"))
+        .env("NYX_E2E_PORT", port.to_string())
+        .env("NYX_E2E_CERT", data.join("cert.pem"))
+        .env("NYX_E2E_KEY", data.join("key.pem"))
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // The user's part of pairing: confirm the request the extension made.
+    let deadline = Instant::now() + Duration::from_secs(180);
+    while node.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "the browser test didn't finish");
+        let app = s.as_peer("nyx-passwords", json!([["Pairings"]]));
+        let listing: Value = serde_json::from_str(ok(&app[0]).as_str().unwrap()).unwrap();
+        if let Some(id) = listing["pending"][0]["id"].as_str() {
+            s.as_peer("nyx-passwords", json!([["ConfirmPairing", id]]));
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    let out = node.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().find_map(|l| l.strip_prefix("E2E ")).unwrap_or_else(|| panic!("{text}"));
+    let r: Value = serde_json::from_str(line).unwrap();
+    assert!(r["failed"].is_null(), "{}\n{r}", r["failed"].as_str().unwrap_or_default());
+    assert_eq!(r["search"], json!(["Local test"]));
+    assert_eq!(r["fillOnLoad"], json!({"user": "octo", "pass": "canary-local-Pw!9"}));
+    assert_eq!(r["menuRows"], json!(["Visa"]));
+    assert_eq!(r["cardFill"], json!({"name": "O. Cat", "number": "4111111111111111", "cvc": "123"}));
+    assert_eq!(r["barQuestion"], format!("Save this login for 127.0.0.1:{port}?"));
+    assert_eq!(r["rememberQuestion"], "Signed in with Google");
+    assert!(r["socialMenu"].as_array().unwrap().iter().any(|t| t == "Sign in with Google"), "{r}");
+    assert_eq!((r["makeKey"].as_str(), r["useKey"].as_str()), (Some("ok"), Some("ok")), "{r}");
+    let made = &r["webauthn"]["made"];
+    assert_eq!(
+        (made["type"].as_str(), made["raw"].as_u64(), made["isCredential"].as_bool()),
+        (Some("public-key"), Some(16), Some(true))
+    );
+    assert_eq!(made["client"]["origin"], format!("https://127.0.0.1:{port}"));
+    let used = &r["webauthn"]["used"];
+    assert_eq!(
+        (used["id"].as_str(), used["user"].as_str(), used["data"].as_u64()),
+        (made["id"].as_str(), Some("user-1"), Some(37))
+    );
+    assert_eq!(used["client"]["type"], "webauthn.get");
+
+    // The vault has what the browser saved: the new login, and the passkey's login.
+    let app = s.as_peer("nyx-passwords", json!([["List"]]));
+    let listing: Value = serde_json::from_str(ok(&app[0]).as_str().unwrap()).unwrap();
+    let entries = listing["entries"].as_array().unwrap();
+    assert!(entries.iter().any(|e| e["username"] == "new@example.com"), "{listing}");
+    assert!(entries.iter().any(|e| e["username"] == "octo" && e["name"] == "127.0.0.1"), "the passkey's new login: {listing}");
 }

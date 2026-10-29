@@ -54,6 +54,31 @@
 - [x] Site context for `pw` (the reporting browser must be the focused window)
 - [ ] Tried in Firefox, Zen, Chromium, Brave (needs the extension loaded by hand; Firefox release needs signing)
 
+## Phase 6 — closer to Vaultwarden
+- [x] One-time code shown at once, following each new code, with a countdown ring (`Totp`: the item's own period)
+- [x] Folders: make, rename, delete (items stay, in no folder)
+- [x] Custom fields: edit text, hidden and true-or-false fields; linked ones and hidden ones this account can't see are kept
+- [x] Password history in the item view (`History`, `history:N`)
+- [x] Delete for good from the trash, empty the trash
+- [x] Copy an item (secrets, custom fields and notes; not attachments or passkeys)
+- [x] Several items at once: move to a folder, trash, restore, delete for good
+- [x] Live sync through Vaultwarden's notification hub (SignalR, MessagePack); a burst of changes is one sync; `Revision` tells the window
+- [x] Equivalent domains (global and the account's own) in base-domain matching
+- [x] Website icons through the server's icon service, opt-in, kept in memory only (a disk cache would put the vault's sites on disk)
+- [x] Import (Bitwarden JSON plain/password/account, Bitwarden CSV, 1Password .1pux, Chrome, Firefox and KeePassXC CSV) and export (Bitwarden JSON, password-protected JSON, account JSON, CSV); `tests/transfer.rs` against `bw` both ways
+- [x] Sign in with another device (asking and approving, fingerprint phrases), the account's API key, YubiKey OTP, and recovery codes (two-step method 8; Vaultwarden 1.37 dropped `/two-factor/recover`); `tests/signin.rs`
+- [ ] Security keys (FIDO2) for two-step login: needs a key to test with
+- [ ] Duo: needs a Duo account to test with
+- [ ] SSO (OIDC): needs an identity provider beside the test server
+- [x] Username generator (word, plus address, catch-all, six alias services; tokens in the keyring) and generator history in memory; `tests/alias.rs` against a stand-in for each service
+- [x] Emergency access: invite, confirm after comparing fingerprints, request, approve, reject, remove, view read-only; `tests/emergency.rs` with two accounts. Takeover isn't offered
+- [x] Passkeys: listed and deleted in the item view; made and used by the extension (ES256, stored as the official clients store them); `tests/passkeys.rs` reads them back with `bw` and checks signatures
+- [x] Extension, the best of Bitwarden's and 1Password's: a menu under login, sign-up, one-time-code, card and address fields; filling as the page loads (setting in both places, per-login opt-out); save and update bar with a never-save list; popup search of the whole vault (fill after a warning, then offer to add the address); copy through the daemon's clipboard; one-time code ring; generator with options and usernames; security tags; universal sign-on ("Sign in with Google" remembered and clicked for you); passkeys (opt-in); badge, shortcuts, context menu, a welcome page
+- [x] Extension design (0.4.0): a 1Password-style popup (search, suggestions for the page, filters, the item beside the list with Autofill and click-to-copy fields, generator, settings) and redrawn menu, save bar and passkey window, in the Nyx 2.0 look and Passwords' own theme (`settings` carries it; `nyx.js` applies it); site icons when the app's icon setting is on. `browser/test/preview.mjs` photographs every view with made-up items
+- [x] Headless Firefox test (`firefox_extension`, WebDriver BiDi): pairing, fill on load, card menu, save bar, universal sign-on, passkey made and used; `web-ext lint` in CI
+- [x] Firefox add-on signing: 0.3.0 signed unlisted on AMO (`web-ext sign --channel unlisted`)
+- Live tests: `tests/edit.rs` `folders_fields_history_and_many_items` (with `bw`), `tests/live.rs` (hub, equivalent domains), `tests/daemon.rs` scopes and `live_sync`
+
 ## Phase 4 / 5
 See PLAN.md.
 - [x] Phase 5: threat-model review against the code ([REVIEW.md](REVIEW.md)); six fixes
@@ -62,10 +87,10 @@ See PLAN.md.
 - [x] Item view: card, identity and SSH key fields and custom fields, with copy and reveal (`Fields`; secret values only through `Reveal`)
 - [x] Editing notes, cards and identities (`CreateItem`, `UpdateItem`; fields the app doesn't know are kept)
 - [x] Editing SSH keys: generate (Ed25519) or import an OpenSSH private key; the public key and fingerprint always come from it
-- [ ] SSH keys with a passphrase (imports ask for a copy without one for now)
+- [x] SSH keys with a passphrase: the import asks for it and keeps the key without it, as the official clients do (`OpenSshKey`)
 - [x] Unlock with the keyring (opt-in, trade-off in the setting; tested against a private keyring that never prompts)
 - [ ] Fingerprint unlock (fprintd): needs a reader to test on; none here
-- [x] Passkeys investigation ([PASSKEYS.md](PASSKEYS.md)): storage format, what the official clients do as an authenticator, the extension and daemon design, interop tests; building it waits
+- [x] Passkeys investigation ([PASSKEYS.md](PASSKEYS.md)): storage format, what the official clients do as an authenticator, the extension and daemon design, interop tests; built in Phase 6
 - [x] Assistant ability: `nyx-passwords-assistant` (MCP, `assistant` scope, off by default), `abilities/passwords`, `Secrets` capability in assistant-policy; tested over the socket and in the policy tests (the Assistant itself is reinstalled separately)
 - [x] Security report: weak (zxcvbn), reused and old passwords in memory, as a Security section; breach check through Have I Been Pwned's range API on request (prefixes only, padded), tested against a stand-in server
 - [x] Attachments: list, save to a chosen file, attach, delete; the daemon reads and writes the file through a handle the window passes, so the window never holds the contents

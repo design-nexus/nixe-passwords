@@ -82,6 +82,14 @@ pub fn password(rules: &PasswordRules) -> Result<Secret, BadRules> {
     Ok(Secret::new(out.iter().collect::<String>()))
 }
 
+/// The secret code of a sign-in request (25 letters and digits, as the official clients
+/// make): it stands in for the password when the approved request signs in.
+pub fn access_code() -> String {
+    let set: Vec<char> = LOWER.chars().chain(UPPER.chars()).chain(DIGITS.chars()).collect();
+    let mut rng = rand::rng();
+    (0..25).map(|_| *set.choose(&mut rng).expect("set isn't empty")).collect()
+}
+
 /// Words from the EFF long list, optionally capitalized, one of them with a digit.
 pub fn passphrase(rules: &PassphraseRules) -> Result<Secret, BadRules> {
     if !(3..=20).contains(&rules.words) || rules.separator.chars().count() > 3 {

@@ -60,7 +60,16 @@ build time and binary size, and that `cargo deny` accepts every licence.
 | `wl-clipboard-rs` 0.9 | MIT/Apache | Clipboard owner over data-control | no |
 | `zxcvbn` 3 | MIT | Password strength for the security report (the estimator the official clients use) | no (added 2026-10-20) |
 | `sha1` 0.11 | MIT/Apache | SHA-1 of passwords for the breach check's k-anonymity prefixes (the range API's format) | yes (0.11.0) |
-| `ssh-key` =0.7.0-rc.11 (`ed25519`) | MIT/Apache | SSH key items: reading OpenSSH private keys, generating Ed25519 keys, public keys and `SHA256:` fingerprints, as the official clients store them. Bitwarden's own `bitwarden-ssh` isn't published. The release candidate is pinned because it shares the RustCrypto versions bitwarden-crypto already pulls in (`rsa 0.10` rc, `ed25519-dalek 3`, `rand_core 0.10`, `sha2 0.11`); the stable 0.6 line would add a second, older copy of each | no (added 2026-10-20) |
+| `ssh-key` =0.7.0-rc.11 (`ed25519`) | MIT/Apache | SSH key items: reading OpenSSH private keys, generating Ed25519 keys, public keys and `SHA256:` fingerprints, as the official clients store them. Bitwarden's own `bitwarden-ssh` isn't published. The release candidate is pinned because it shares the RustCrypto versions bitwarden-crypto already pulls in (`rsa 0.10` rc, `ed25519-dalek 3`, `rand_core 0.10`, `sha2 0.11`); the stable 0.6 line would add a second, older copy of each. The `encryption` feature (added 2026-10-28) opens keys with a passphrase; it brings `bcrypt-pbkdf` and `blowfish` (MIT/Apache) | no (added 2026-10-20) |
+| `tokio-tungstenite` 0.30 (rustls) | MIT | Live sync: the WebSocket to Vaultwarden's notification hub (`live.rs`) | no (added 2026-10-28) |
+| `rustls`, `rustls-platform-verifier` | MIT/Apache/ISC | The hub's TLS, set up as reqwest's (system certificates plus the extra CA, aws-lc-rs) | yes (through reqwest) |
+| `csv` 1 | MIT/Unlicense | Reading and writing CSV exports | no (added 2026-10-28) |
+| `zip` 9 (deflate only) | MIT | Reading 1Password's `.1pux` | no (added 2026-10-28) |
+| `rmpv` 1 | MIT | The hub's SignalR MessagePack messages | no (added 2026-10-28) |
+| `p256` 0.14 (`ecdsa`, `pkcs8`) | MIT/Apache | Passkeys: ES256 keys, signatures, and the PKCS#8 form the official clients store; called only from `crypto.rs` | no (added 2026-10-28) |
+| `ciborium` 0.2 | MIT/Apache | Passkeys: the COSE public key and attestation object (CBOR) | no (added 2026-10-28) |
+| `base64` 0.22 | MIT/Apache | Passkeys: base64url credential ids and keys | yes |
+| `futures-util` | MIT/Apache | Live sync: reading and writing the WebSocket | yes |
 | `libc` | MIT/Apache | `SO_PEERCRED`, `SO_PEERPIDFD`, `prctl`, `flock` | yes |
 | `rand` 0.10 | MIT/Apache | The password generator (thread CSPRNG); bitwarden-generators needs a full bitwarden-core client, so it isn't used | via bitwarden-crypto |
 | `x25519-dalek`, `hkdf`, `aes-gcm` | BSD-3/MIT/Apache | Native Messaging pairing (Phase 3) | partly |

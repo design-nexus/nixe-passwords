@@ -270,8 +270,8 @@ for a in "${apps[@]}"; do
     mkdir -p "$config/systemd/user"
     install -m 644 "$d/data/nyx-passwords.service" "$config/systemd/user/nyx-passwords.service"
     systemctl --user daemon-reload 2>/dev/null || true
-    # A running vault restarts on the new build, which locks it.
-    # Leave the running vault untouched; the new binary is used at its next start.
+    # Leave the running vault untouched: restarting locks it. The daemon starts again on
+    # the new binary by itself once the vault is locked, and an open window offers it.
     for host in nyx-settings settings; do
       ext="$share/$host/extensions/passwords"
       mkdir -p "$ext"

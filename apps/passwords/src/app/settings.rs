@@ -50,6 +50,148 @@ fn switch(rows: &gtk::Box, title: &str, desc: &str, on: bool, set: impl Fn(&mut 
     rows.append(&row);
 }
 
+/// The username generator: what it makes, and each kind's settings (shown for the
+/// chosen kind only). Alias service tokens go to the keyring through the daemon.
+fn username_rows(ui: &Ui, g: &gtk::Box, r: &nyx_passwords_core::alias::UsernameRules) {
+    use nyx_passwords_core::alias::{SERVICES, UsernameKind};
+    let kinds = w::opts(&[
+        ("word", "A random word"),
+        ("plus", "Your email with a tag"),
+        ("catch_all", "An address at your catch-all domain"),
+        ("forwarded", "An alias from an email service"),
+    ]);
+    let current = match r.kind {
+        UsernameKind::Word => "word",
+        UsernameKind::Plus => "plus",
+        UsernameKind::CatchAll => "catch_all",
+        UsernameKind::Forwarded => "forwarded",
+    };
+    let entry_row = |title: &str, desc: &str, value: &str, set: fn(&mut prefs::Prefs, String)| {
+        let e = gtk::Entry::new();
+        e.set_text(value);
+        e.set_width_chars(22);
+        e.connect_changed(move |e| prefs::update(|p| set(p, e.text().trim().to_string())));
+        w::row(title, desc, Some(e.upcast_ref()))
+    };
+    let email =
+        entry_row("Your email address", "Tagged as you+tag@example.com.", &r.email, |p, x| p.vault.username_rules.email = x);
+    let domain = entry_row("Catch-all domain", "A domain that takes mail for any name.", &r.domain, |p, x| {
+        p.vault.username_rules.domain = x
+    });
+    let (by_site, _) = w::switch_row("Tag with the site's name", "github.com rather than random letters.", r.by_site, |on| {
+        prefs::update(|p| p.vault.username_rules.by_site = on)
+    });
+    let services: Vec<(String, String)> = SERVICES.iter().map(|(id, name)| (id.to_string(), name.to_string())).collect();
+    let (service, service_choice) = w::choice_row("Email alias service", "", services, &r.service, |id| {
+        prefs::update(|p| p.vault.username_rules.service = id)
+    });
+    let token_state = label("", "dim");
+    let set_token = gtk::Button::with_label("Set token…");
+    let token_line = w::hbox(8);
+    token_line.append(&token_state);
+    token_line.append(&set_token);
+    let token = w::row("API token", "Kept in your desktop keyring.", Some(token_line.upcast_ref()));
+    let service_domain =
+        entry_row("Alias domain", "For addy.io and Forward Email: the domain to make aliases at.", &r.service_domain, |p, x| {
+            p.vault.username_rules.service_domain = x
+        });
+    let service_url = entry_row(
+        "Your own server",
+        "For a self-hosted SimpleLogin or addy.io; empty for the hosted one.",
+        &r.service_url,
+        |p, x| p.vault.username_rules.service_url = x,
+    );
+    let (word_number, _) = w::switch_row("Add a number", "To the random word.", r.number, |on| {
+        prefs::update(|p| p.vault.username_rules.number = on)
+    });
+    let rows: [(&gtk::Box, &[&str]); 8] = [
+        (&word_number, &["word"]),
+        (&email, &["plus"]),
+        (&domain, &["catch_all"]),
+        (&by_site, &["plus", "catch_all"]),
+        (&service, &["forwarded"]),
+        (&token, &["forwarded"]),
+        (&service_domain, &["forwarded"]),
+        (&service_url, &["forwarded"]),
+    ];
+    let show_for = {
+        let rows: Vec<(gtk::Box, Vec<&'static str>)> = rows.iter().map(|(r, k)| ((*r).clone(), k.to_vec())).collect();
+        move |kind: &str| {
+            for (row, kinds) in &rows {
+                row.set_visible(kinds.contains(&kind));
+            }
+        }
+    };
+    let (kind_row, _) = w::choice_row("Generate usernames", "What the editor's username generator makes.", kinds, current, {
+        let show_for = show_for.clone();
+        move |id| {
+            let kind = match id.as_str() {
+                "plus" => UsernameKind::Plus,
+                "catch_all" => UsernameKind::CatchAll,
+                "forwarded" => UsernameKind::Forwarded,
+                _ => UsernameKind::Word,
+            };
+            prefs::update(|p| p.vault.username_rules.kind = kind);
+            show_for(&id);
+        }
+    });
+    g.append(&kind_row);
+    for (row, _) in rows {
+        g.append(row);
+    }
+    show_for(current);
+
+    // Whether the chosen service has a token: asked of the keyring through the daemon.
+    let refresh_token_state = {
+        let token_state = token_state.clone();
+        move || {
+            let token_state = token_state.clone();
+            glib::spawn_future_local(async move {
+                let service = prefs::get().vault.username_rules.service;
+                let saved = super::client::text("ForwarderTokens", None)
+                    .await
+                    .ok()
+                    .and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok())
+                    .is_some_and(|v| v[&service] == true);
+                token_state.set_text(if saved { "Saved" } else { "Not set" });
+            });
+        }
+    };
+    refresh_token_state();
+    let r2 = refresh_token_state.clone();
+    service_choice.connect_selected_notify(move |_| r2());
+    let u = ui.clone();
+    set_token.connect_clicked(move |_| {
+        let (dialog, card) = w::dialog("Alias service token", 440);
+        dialog.set_transient_for(Some(&u.window));
+        card.append(&label("Paste the API token from the service's settings. Leave it empty to remove the saved one.", "dim"));
+        let entry = gtk::PasswordEntry::new();
+        entry.set_show_peek_icon(true);
+        card.append(&entry);
+        let save = gtk::Button::with_label("Save");
+        save.add_css_class("suggested-action");
+        save.set_halign(gtk::Align::End);
+        card.append(&save);
+        let (d, refresh, u) = (dialog.clone(), refresh_token_state.clone(), u.clone());
+        save.connect_clicked(move |_| {
+            let token = entry.text().trim().to_string();
+            entry.set_text("");
+            let (d, refresh, u) = (d.clone(), refresh.clone(), u.clone());
+            glib::spawn_future_local(async move {
+                let service = prefs::get().vault.username_rules.service;
+                match super::client::call("SetForwarderToken", Some((service.as_str(), token.as_str()).to_variant())).await {
+                    Ok(_) => {
+                        d.close();
+                        refresh();
+                    }
+                    Err(e) => ui::toast(&u, &e.to_string()),
+                }
+            });
+        });
+        dialog.present();
+    });
+}
+
 /// "Unlock with the keyring". Not a preference: the daemon saves the vault's key in the
 /// desktop keyring or removes it, and the switch shows which is the case.
 fn keyring_row(ui: &Ui) -> gtk::Box {
@@ -147,6 +289,20 @@ pub fn open(ui: &Ui) {
         v.sync_minutes,
         |p, x| p.vault.sync_minutes = x,
     );
+    switch(
+        &g,
+        "Live sync",
+        "Hear from the server as soon as the vault changes on another device, and sync then.",
+        v.live_sync,
+        |p, x| p.vault.live_sync = x,
+    );
+    switch(
+        &g,
+        "Website icons",
+        "Show each login's site icon. Your server fetches them from the sites, so it learns which sites you have logins for. They're kept in memory only, while the vault is open.",
+        v.icons,
+        |p, x| p.vault.icons = x,
+    );
     let ca_desc = v
         .extra_ca
         .as_ref()
@@ -176,6 +332,34 @@ pub fn open(ui: &Ui) {
         });
     });
     g.append(&row);
+
+    if *ui.state.borrow() == nyx_passwords_proto::state::UNLOCKED {
+        let g = group(&body, "Import and export");
+        let u = ui.clone();
+        let (row, _) = w::button_row(
+            "Import",
+            "From Bitwarden (JSON or CSV, with or without a password), 1Password (.1pux), Chrome, Firefox or KeePassXC (CSV).",
+            "Import…",
+            move |_| super::transfer::import(&u),
+        );
+        g.append(&row);
+        let u = ui.clone();
+        let (row, _) =
+            w::button_row("Export", "Your items in Bitwarden's formats, for a backup or another app.", "Export…", move |_| {
+                super::transfer::export(&u)
+            });
+        g.append(&row);
+
+        let g = group(&body, "Emergency access");
+        let u = ui.clone();
+        let (row, _) = w::button_row(
+            "Emergency access",
+            "Trusted people who can ask to view your vault, and the vaults others trust you with.",
+            "Open…",
+            move |_| super::emergency::open(&u),
+        );
+        g.append(&row);
+    }
 
     let g = group(&body, "Clipboard");
     choice(
@@ -244,6 +428,7 @@ pub fn open(ui: &Ui) {
     words.set_value(v.passphrase_rules.words as f64);
     words.connect_value_changed(|s| prefs::update(|p| p.vault.passphrase_rules.words = s.value() as usize));
     g.append(&w::row("Passphrase words", "Words in a generated passphrase.", Some(words.upcast_ref())));
+    username_rows(ui, &g, &v.username_rules);
 
     let g = group(&body, "Integrations");
     switch(
@@ -270,6 +455,20 @@ pub fn open(ui: &Ui) {
         )),
         None,
     ));
+    switch(
+        &g,
+        "Fill logins as pages load",
+        "Paired browsers fill a site's login when its page opens: only on https, only the login made for that exact site, only into empty fields, never one that asks for the master password. A login can opt out in the editor.",
+        v.fill_on_load,
+        |p, x| p.vault.fill_on_load = x,
+    );
+    switch(
+        &g,
+        "Passkeys in browsers",
+        "Paired browsers may offer your vault's passkeys when a site asks and save new ones there. You confirm each in the extension's own window, and the extension's setting must be on too.",
+        v.browser_passkeys,
+        |p, x| p.vault.browser_passkeys = x,
+    );
     super::pairing::fill_group(&g);
 
     let g = group(&body, "Passwords window");
@@ -345,6 +544,8 @@ pub fn open(ui: &Ui) {
         nyx_ui::settings_card::Spec {
             groups: &[
                 ("Vault", "dialog-password-symbolic", "Locking, sync, server"),
+                ("Import and export", "document-send-symbolic", "Bitwarden, 1Password, browsers"),
+                ("Emergency access", "system-users-symbolic", "Trusted contacts"),
                 ("Clipboard", "edit-paste-symbolic", "Clearing, notifications"),
                 ("Generator", "media-playlist-shuffle-symbolic", "Passwords and passphrases"),
                 ("Integrations", "system-search-symbolic", "Glimpse, Nyx Assistant"),

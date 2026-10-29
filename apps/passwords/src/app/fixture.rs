@@ -5,8 +5,9 @@
 //!   PASSWORDS_TEST_SIGNIN=URL|EMAIL|PASSWORD   a throwaway test account to sign in to
 //!   PASSWORDS_TEST_ITEMS=JSON         an array of drafts to create first (logins, or
 //!                                     notes, cards and identities with a `kind`)
-//!   PASSWORDS_TEST_SELECT=NAME        the item to select
+//!   PASSWORDS_TEST_SELECT=NAME[|NAME…] the item to select, or several
 //!   PASSWORDS_TEST_SETTINGS=1         open the settings card
+//!   PASSWORDS_TEST_EMERGENCY=1        open the emergency access dialog
 //!   PASSWORDS_TEST_SECTION=ID         the sidebar section
 //!   PASSWORDS_TEST_EDIT=1             open the editor on the selection
 //!   PASSWORDS_TEST_UNLOCK=PASSWORD    unlock a locked vault first
@@ -58,7 +59,8 @@ pub fn maybe(ui: &Ui) {
         if let Ok(section) = std::env::var("PASSWORDS_TEST_SECTION") {
             ui::navigate(&ui, &section);
         }
-        if let Ok(name) = std::env::var("PASSWORDS_TEST_SELECT") {
+        let names = std::env::var("PASSWORDS_TEST_SELECT").unwrap_or_default();
+        for name in names.split('|').filter(|n| !n.is_empty()) {
             let id = ui.listing.borrow().entries.iter().find(|e| e.name == name).map(|e| e.id.clone());
             if let Some(id) = id {
                 let mut row = ui.list.first_child();
@@ -74,6 +76,9 @@ pub fn maybe(ui: &Ui) {
         }
         if std::env::var_os("PASSWORDS_TEST_SETTINGS").is_some() {
             ui::open_settings();
+        }
+        if std::env::var_os("PASSWORDS_TEST_EMERGENCY").is_some() {
+            super::emergency::open(&ui);
         }
         if std::env::var_os("PASSWORDS_TEST_EDIT").is_some() {
             let id = ui.selected.borrow().clone();

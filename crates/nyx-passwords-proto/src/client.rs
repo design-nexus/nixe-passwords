@@ -16,11 +16,13 @@ use crate::{Error, INTERFACE, OBJECT_PATH, SERVICE, address};
 pub struct Fail {
     pub code: Option<Error>,
     pub message: String,
+    /// The daemon doesn't have the method: it's an older build than this program.
+    pub unknown_method: bool,
 }
 
 impl Fail {
     fn local(message: &str) -> Fail {
-        Fail { code: None, message: message.into() }
+        Fail { code: None, message: message.into(), unknown_method: false }
     }
 
     pub fn is(&self, code: Error) -> bool {
@@ -29,7 +31,7 @@ impl Fail {
 
     /// The daemon couldn't be reached or started.
     pub fn unreachable(&self) -> bool {
-        self.code.is_none()
+        self.code.is_none() && !self.unknown_method
     }
 }
 
@@ -123,6 +125,12 @@ pub async fn reveal(id: &str, field: &str) -> Result<String> {
     text("Reveal", Some((id, field).to_variant())).await
 }
 
+/// The current one-time code: `(code, period, seconds left)`.
+pub async fn totp(id: &str) -> Result<(String, u32, u32)> {
+    let v = call("Totp", Some((id,).to_variant())).await?;
+    v.get::<(String, u32, u32)>().ok_or_else(|| Fail::local("unexpected answer"))
+}
+
 /// `Search` (or `Suggest` for an empty query): the items and, for `Suggest`, the
 /// trusted site's host (empty when there's none).
 pub async fn search(query: &str, limit: u32) -> Result<(String, Vec<crate::Item>)> {
@@ -149,10 +157,12 @@ fn unit() -> PathBuf {
 }
 
 fn fail(e: glib::Error) -> Fail {
-    let code = gio::DBusError::remote_error(&e).and_then(|name| Error::from_name(&name));
+    let name = gio::DBusError::remote_error(&e);
+    let code = name.as_deref().and_then(Error::from_name);
+    let unknown_method = name.as_deref() == Some("org.freedesktop.DBus.Error.UnknownMethod");
     let mut e = e;
     gio::DBusError::strip_remote_error(&mut e);
-    Fail { code, message: e.message().to_string() }
+    Fail { code, message: e.message().to_string(), unknown_method }
 }
 
 async fn connection() -> Result<gio::DBusConnection> {

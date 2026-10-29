@@ -43,6 +43,7 @@ fn login(name: &str) -> LoginDraft {
         favorite: false,
         reprompt: false,
         place: Place::default(),
+        custom: None,
     }
 }
 
@@ -56,6 +57,7 @@ fn card(name: &str) -> ItemDraft {
         favorite: false,
         reprompt: false,
         place: Place::default(),
+        custom: None,
     }
 }
 

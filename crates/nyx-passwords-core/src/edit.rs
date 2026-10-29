@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::api::{ApiError, Server};
 use crate::crypto::{ItemKey, is_enc_string, uri_checksum};
-use crate::model::{Cipher, Kind, Login, LoginUri};
+use crate::model::{Cipher, Field, Kind, Login, LoginUri};
 use crate::secret::Secret;
 use crate::session::{Result, Session, SessionError};
 use crate::ssh;
@@ -37,6 +37,19 @@ pub struct LoginDraft {
     /// Ask for the master password again before showing the item's secrets.
     pub reprompt: bool,
     pub place: Place,
+    /// The custom fields as edited; `None` leaves them as they are.
+    pub custom: Option<Vec<CustomDraft>>,
+}
+
+/// A custom field as edited. `kind`: 0 text, 1 hidden, 2 true or false (`value` is
+/// `"true"` or `"false"`). `from` is the field it was in the item, by position; with no
+/// `value`, that field's stored value stays (a hidden field the editor didn't open).
+/// Linked fields aren't edited here and are kept as they are.
+pub struct CustomDraft {
+    pub name: Secret,
+    pub value: Option<Secret>,
+    pub kind: i64,
+    pub from: Option<usize>,
 }
 
 /// Where an item lives: personal (`organization: None`), or in some of an
@@ -61,6 +74,7 @@ pub struct ItemDraft {
     pub favorite: bool,
     pub reprompt: bool,
     pub place: Place,
+    pub custom: Option<Vec<CustomDraft>>,
 }
 
 /// The kinds `create_item` and `update_item` handle (logins have their own draft).
@@ -92,7 +106,7 @@ impl Session {
                 "key": null,
                 "favorite": draft.favorite,
                 "reprompt": i64::from(draft.reprompt),
-                "fields": null,
+                "fields": fill_fields(&mut key, None, draft.custom.as_deref(), true)?,
                 "passwordHistory": null,
                 "login": login,
                 "encryptedFor": self.snapshot.profile.id,
@@ -140,6 +154,9 @@ impl Session {
                 push_history(&mut new, old_password);
             }
             new.login = Some(login);
+            if draft.custom.is_some() {
+                new.fields = fill_fields(&mut key, old.fields.as_deref(), draft.custom.as_deref(), visible)?;
+            }
         }
         self.send_update(store, server, &access, &old, &new).await?;
         self.move_to(store, server, &access, id, &draft.place).await
@@ -164,7 +181,7 @@ impl Session {
                 "key": null,
                 "favorite": draft.favorite,
                 "reprompt": i64::from(draft.reprompt),
-                "fields": null,
+                "fields": fill_fields(&mut key, None, draft.custom.as_deref(), true)?,
                 "passwordHistory": null,
                 "encryptedFor": self.snapshot.profile.id,
             });
@@ -215,6 +232,10 @@ impl Session {
                     filled[spec.key] = kept.as_ref().and_then(|k| k.get(spec.key)).cloned().unwrap_or(Value::Null);
                 }
                 *section = Some(filled);
+            }
+            if draft.custom.is_some() {
+                let visible = old.can_view_password();
+                new.fields = fill_fields(&mut key, old.fields.as_deref(), draft.custom.as_deref(), visible)?;
             }
         }
         self.send_update(store, server, &access, &old, &new).await?;
@@ -416,6 +437,250 @@ impl Session {
         self.take(store, restored)
     }
 
+    /// Deletes items from the trash for good. Every one must be in the trash and
+    /// deletable by this account, or nothing is sent.
+    pub async fn delete_forever(&mut self, store: &mut Store, server: &Server, refresh: &Secret, ids: &[Uuid]) -> Result<()> {
+        for id in ids {
+            let c = self.cipher(*id)?;
+            if !c.is_deleted() {
+                return Err(SessionError::NotAllowed("only items in the trash can be deleted for good"));
+            }
+            if !c.can_delete() {
+                return Err(SessionError::NotAllowed("you can't delete this item"));
+            }
+        }
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        server.delete_ciphers(&access, ids).await?;
+        for id in ids {
+            self.forget(store, *id)?;
+        }
+        Ok(())
+    }
+
+    /// Moves several items to the trash, or out of it. The server dates each change, so
+    /// the vault is synced afterwards rather than guessed.
+    pub async fn trash_many(
+        &mut self,
+        store: &mut Store,
+        server: &Server,
+        refresh: &Secret,
+        ids: &[Uuid],
+        restore: bool,
+    ) -> Result<()> {
+        for id in ids {
+            let c = self.cipher(*id)?;
+            if restore && !c.can_restore() {
+                return Err(SessionError::NotAllowed("you can't restore one of these items"));
+            }
+            if !restore && !c.can_delete() {
+                return Err(SessionError::NotAllowed("you can't delete one of these items"));
+            }
+        }
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        if restore {
+            server.restore_ciphers(&access, ids).await?;
+        } else {
+            server.trash_ciphers(&access, ids).await?;
+        }
+        self.sync(store, server, refresh).await
+    }
+
+    /// Puts several items in a folder (`None`: no folder), then syncs.
+    pub async fn move_many(
+        &mut self,
+        store: &mut Store,
+        server: &Server,
+        refresh: &Secret,
+        ids: &[Uuid],
+        folder: Option<Uuid>,
+    ) -> Result<()> {
+        for id in ids {
+            self.cipher(*id)?;
+        }
+        if folder.is_some_and(|f| !self.snapshot.folders.iter().any(|x| x.id == f)) {
+            return Err(SessionError::Api(ApiError::NotFound));
+        }
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        server.move_ciphers(&access, ids, folder).await?;
+        self.sync(store, server, refresh).await
+    }
+
+    /// The passkeys on an item (without their keys).
+    pub fn passkeys(&self, id: Uuid) -> Result<Vec<crate::passkey::Passkey>> {
+        let c = self.cipher(id)?;
+        let mut key = self.keys.item(c.organization_id, c.key.as_deref())?;
+        Ok(crate::passkey::list(&mut key, c)?)
+    }
+
+    /// Removes one passkey from an item.
+    pub async fn delete_passkey(
+        &mut self,
+        store: &mut Store,
+        server: &Server,
+        refresh: &Secret,
+        id: Uuid,
+        credential_id: &str,
+    ) -> Result<()> {
+        let old = self.cipher(id)?.clone();
+        if !old.can_edit() {
+            return Err(SessionError::NotAllowed("this item is read-only for you"));
+        }
+        let mut new = old.clone();
+        {
+            let mut key = self.keys.item(old.organization_id, old.key.as_deref())?;
+            let mut kept = Vec::new();
+            let mut found = false;
+            for p in crate::passkey::stored(&old) {
+                let this = key.decrypt_opt(p.get("credentialId").and_then(Value::as_str))?;
+                if this.is_some_and(|t| t.expose() == credential_id) {
+                    found = true;
+                } else {
+                    kept.push(p);
+                }
+            }
+            if !found {
+                return Err(SessionError::Api(ApiError::NotFound));
+            }
+            let login = new.login.get_or_insert_with(Login::default);
+            login.extra.insert("fido2Credentials".into(), Value::Array(kept));
+        }
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        self.send_update(store, server, &access, &old, &new).await
+    }
+
+    /// Saves a new passkey on login `into`, replacing any it had (the official clients
+    /// keep one per login), or on a new login for `page` named after its site.
+    pub async fn save_passkey(
+        &mut self,
+        store: &mut Store,
+        server: &Server,
+        refresh: &Secret,
+        into: Option<Uuid>,
+        page: &url::Url,
+        made: &crate::passkey::Created,
+    ) -> Result<Uuid> {
+        let id = match into {
+            Some(id) => id,
+            None => {
+                let host = page.host_str().unwrap_or_default().trim_start_matches("www.").to_string();
+                let username = made.fields.get("userName").and_then(Value::as_str).filter(|u| !u.is_empty());
+                let draft = LoginDraft {
+                    name: Secret::new(host),
+                    username: username.map(Secret::new),
+                    password: None,
+                    totp: None,
+                    uris: vec![Secret::new(page.origin().ascii_serialization())],
+                    notes: None,
+                    folder: None,
+                    favorite: false,
+                    reprompt: false,
+                    place: Place::default(),
+                    custom: None,
+                };
+                self.create_login(store, server, refresh, &draft).await?
+            }
+        };
+        let old = self.cipher(id)?.clone();
+        if old.kind() != Kind::Login {
+            return Err(SessionError::NotAllowed("passkeys go on logins"));
+        }
+        if !old.can_edit() {
+            return Err(SessionError::NotAllowed("this item is read-only for you"));
+        }
+        let mut new = old.clone();
+        {
+            let mut key = self.keys.item(old.organization_id, old.key.as_deref())?;
+            let stored = crate::passkey::encrypt(&mut key, &made.fields)?;
+            let login = new.login.get_or_insert_with(Login::default);
+            login.extra.insert("fido2Credentials".into(), Value::Array(vec![stored]));
+        }
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        self.send_update(store, server, &access, &old, &new).await?;
+        Ok(id)
+    }
+
+    /// Imports what `transfer::parse` read, as personal items, then syncs.
+    pub async fn import(
+        &mut self,
+        store: &mut Store,
+        server: &Server,
+        refresh: &Secret,
+        parsed: &crate::transfer::Parsed,
+    ) -> Result<()> {
+        if parsed.items.is_empty() {
+            return Err(SessionError::NotAllowed("the file has no items to import"));
+        }
+        let body = crate::transfer::import_request(&self.keys, self.snapshot.profile.id, parsed)
+            .map_err(|_| SessionError::Api(ApiError::Protocol))?;
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        server.import_ciphers(&access, &body).await?;
+        self.sync(store, server, refresh).await
+    }
+
+    /// Creates a folder and returns its id.
+    pub async fn create_folder(&mut self, store: &mut Store, server: &Server, refresh: &Secret, name: &Secret) -> Result<Uuid> {
+        let encrypted = self.keys.item(None, None)?.encrypt(folder_name(name)?)?;
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        let made = server.create_folder(&access, &encrypted).await?;
+        let id = made.id;
+        self.take_folder(store, made)?;
+        Ok(id)
+    }
+
+    pub async fn rename_folder(
+        &mut self,
+        store: &mut Store,
+        server: &Server,
+        refresh: &Secret,
+        id: Uuid,
+        name: &Secret,
+    ) -> Result<()> {
+        if !self.snapshot.folders.iter().any(|f| f.id == id) {
+            return Err(SessionError::Api(ApiError::NotFound));
+        }
+        let encrypted = self.keys.item(None, None)?.encrypt(folder_name(name)?)?;
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        let renamed = server.rename_folder(&access, id, &encrypted).await?;
+        self.take_folder(store, renamed)
+    }
+
+    /// Deletes a folder; its items stay, in no folder.
+    pub async fn delete_folder(&mut self, store: &mut Store, server: &Server, refresh: &Secret, id: Uuid) -> Result<()> {
+        if !self.snapshot.folders.iter().any(|f| f.id == id) {
+            return Err(SessionError::Api(ApiError::NotFound));
+        }
+        let access = Secret::new(self.access(server, refresh).await?.expose());
+        server.delete_folder(&access, id).await?;
+        store.remove_folder(id)?;
+        self.snapshot.folders.retain(|f| f.id != id);
+        self.view.remove_folder(id);
+        let emptied: Vec<Cipher> = self.snapshot.ciphers.iter().filter(|c| c.folder_id == Some(id)).cloned().collect();
+        for mut c in emptied {
+            c.folder_id = None;
+            self.take(store, c)?;
+        }
+        Ok(())
+    }
+
+    fn take_folder(&mut self, store: &mut Store, folder: crate::model::Folder) -> Result<()> {
+        store.put_folder(&folder)?;
+        self.view.put_folder(&self.keys, &folder);
+        match self.snapshot.folders.iter_mut().find(|f| f.id == folder.id) {
+            Some(slot) => *slot = folder,
+            None => self.snapshot.folders.push(folder),
+        }
+        Ok(())
+    }
+
     pub(crate) fn cipher(&self, id: Uuid) -> Result<&Cipher> {
         self.snapshot.ciphers.iter().find(|c| c.id == id).ok_or(SessionError::Api(ApiError::NotFound))
     }
@@ -430,6 +695,46 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// A folder's name, trimmed; it can't be empty.
+fn folder_name(name: &Secret) -> Result<&str> {
+    let name = name.expose().trim();
+    if name.is_empty() {
+        return Err(SessionError::NotAllowed("the folder needs a name"));
+    }
+    Ok(name)
+}
+
+/// An item's custom fields from the editor's list. A field that came from the item keeps
+/// what this client doesn't edit; one hidden from this account keeps its value and stays
+/// hidden. Linked fields are kept, after the others.
+fn fill_fields(
+    key: &mut ItemKey,
+    old: Option<&[Field]>,
+    drafts: Option<&[CustomDraft]>,
+    may_view: bool,
+) -> Result<Option<Vec<Field>>> {
+    let old = old.unwrap_or_default();
+    let mut fields = Vec::new();
+    for d in drafts.unwrap_or_default() {
+        if !(0..=2).contains(&d.kind) {
+            return Err(SessionError::Api(ApiError::Protocol));
+        }
+        let base = d.from.and_then(|n| old.get(n)).filter(|f| f.kind != 3);
+        let mut field = base.cloned().unwrap_or(Field { name: None, value: None, kind: d.kind, extra: Default::default() });
+        field.name = encrypt_opt(key, Some(&d.name))?;
+        let locked = !may_view && base.is_some_and(|b| b.kind == 1);
+        if !locked {
+            field.kind = d.kind;
+            if let Some(v) = &d.value {
+                field.value = encrypt_opt(key, Some(v))?;
+            }
+        }
+        fields.push(field);
+    }
+    fields.extend(old.iter().filter(|f| f.kind == 3).cloned());
+    Ok((!fields.is_empty()).then_some(fields))
 }
 
 fn encrypt_opt(key: &mut ItemKey, value: Option<&Secret>) -> Result<Option<String>> {
@@ -582,6 +887,11 @@ fn push_history(cipher: &mut Cipher, old_password: Option<&str>) {
 
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// Now, as the server writes dates (`2026-10-19T01:37:14.000Z`).
+pub fn timestamp() -> String {
+    iso8601(now())
 }
 
 /// `2026-10-19T01:37:14.000Z` for seconds since the epoch (UTC, proleptic Gregorian).

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use nyx_passwords_core::api::{ApiError, MAX_ATTACHMENT, Server, TwoFactor, TwoFactorAnswer};
 use nyx_passwords_core::audit::{self, StrengthCache};
 use nyx_passwords_core::crypto::CryptoError;
-use nyx_passwords_core::edit::{ItemDraft, LoginDraft, Place};
+use nyx_passwords_core::edit::{CustomDraft, ItemDraft, LoginDraft, Place};
 use nyx_passwords_core::generate;
 use nyx_passwords_core::keyring;
 use nyx_passwords_core::model::Kind;
@@ -38,6 +38,8 @@ const SSH_KEY_MAX: usize = 64 * 1024;
 /// Copies Glimpse may ask for in a minute; reveals the app may ask for.
 const GLIMPSE_COPIES_PER_MINUTE: usize = 10;
 const APP_REVEALS_PER_MINUTE: usize = 60;
+/// Generated passwords and usernames kept for the history.
+const GENERATED_KEPT: usize = 20;
 /// How long a master-password confirmation opens items that ask for it again.
 const REPROMPT_GRACE: Duration = Duration::from_secs(5 * 60);
 
@@ -110,6 +112,18 @@ pub(super) struct State {
     pub(super) confirmed: Option<Instant>,
     /// Counts edits, so a sync fetched before one isn't applied over it.
     pub(super) edits: u64,
+    /// Counts syncs applied (`Revision`).
+    pub(super) revision: u64,
+    /// This device's request to sign in with another's approval, while it waits.
+    pub(super) device_sign_in: Option<(Server, session::DeviceSignIn)>,
+    /// Other devices' requests, as last fetched, and whether the hub announced a new one.
+    pub(super) sign_in_requests: Option<(Instant, Vec<session::SignInRequest>)>,
+    pub(super) auth_pending: bool,
+    /// What the generators made while the vault was open, newest first: `(what, value,
+    /// when)`. Only in memory; dropped on lock.
+    pub(super) generated: VecDeque<(&'static str, Secret, u64)>,
+    /// A grantor's vault opened through emergency access; dropped on lock.
+    pub(super) grantor: Option<nyx_passwords_core::emergency::Grantor>,
     /// Browser pairings and the active site (`browser.rs`).
     pub(super) browser: super::browser::Browser,
     /// Password strength per item and revision, for the security report. No passwords.
@@ -120,6 +134,7 @@ pub struct Vault {
     pub(super) state: Mutex<State>,
     clipboard: Arc<StdMutex<Clipboard>>,
     pub(super) notifier: Notifier,
+    icons: super::icons::Icons,
 }
 
 impl Vault {
@@ -138,12 +153,33 @@ impl Vault {
                 app_reveals: VecDeque::new(),
                 confirmed: None,
                 edits: 0,
+                revision: 0,
+                device_sign_in: None,
+                sign_in_requests: None,
+                auth_pending: false,
+                generated: VecDeque::new(),
+                grantor: None,
                 browser: Default::default(),
                 strength: StrengthCache::new(),
             }),
             clipboard: Arc::new(StdMutex::new(Clipboard::default())),
             notifier,
+            icons: Default::default(),
         }
+    }
+
+    /// A site's icon, when website icons are turned on.
+    pub async fn icon(&self, scope: Scope, host: &str) -> Result<Vec<u8>> {
+        need(scope, Scope::App)?;
+        let server = {
+            let mut st = self.state.lock().await;
+            if !st.settings.refresh().icons {
+                return Err(Failure::new(Code::Denied, "website icons are turned off"));
+            }
+            st.session.as_ref().ok_or_else(locked)?;
+            st.server.clone().ok_or_else(|| Failure::new(Code::Failed, "no server"))?
+        };
+        self.icons.get(&server, host).await
     }
 
     pub async fn settings(&self) -> Settings {
@@ -250,10 +286,11 @@ impl Vault {
             st.settings.refresh().clone()
         };
         let value = generated(&settings, None)?;
+        self.remember("password", &value).await;
         self.put_on_clipboard(value, &settings, "Generated password").await
     }
 
-    async fn put_on_clipboard(self: &Arc<Self>, value: Secret, settings: &Settings, label: &str) -> Result<u32> {
+    pub(super) async fn put_on_clipboard(&self, value: Secret, settings: &Settings, label: &str) -> Result<u32> {
         let clipboard = self.clipboard.clone();
         let paste_once = settings.paste_once;
         let serial = tokio::task::spawn_blocking(move || clipboard.lock().expect("clipboard").copy(value, paste_once))
@@ -305,10 +342,15 @@ impl Vault {
         let session = {
             let mut st = self.state.lock().await;
             st.confirmed = None;
+            st.generated.clear();
+            if let Some(g) = st.grantor.take() {
+                g.keys.lock();
+            }
             st.browser.lock();
             st.strength.clear();
             st.session.take()
         };
+        self.icons.forget().await;
         if let Some(s) = session {
             s.lock();
             let clipboard = self.clipboard.clone();
@@ -318,6 +360,19 @@ impl Vault {
 
     pub async fn is_unlocked(&self) -> bool {
         self.state.lock().await.session.is_some()
+    }
+
+    /// Locked, and not in the middle of signing in with another device's approval.
+    pub async fn idle_while_locked(&self) -> bool {
+        let st = self.state.lock().await;
+        st.session.is_none() && st.device_sign_in.is_none()
+    }
+
+    /// Starts the daemon again on the binary an update put in place; it locks first.
+    pub fn restart_for_update(&self, scope: Scope) -> Result<()> {
+        need(scope, Scope::App)?;
+        super::restart();
+        Ok(())
     }
 
     /// Locks if the vault has been unused for the configured time.
@@ -352,22 +407,124 @@ impl Vault {
             SignIn::Done(s) => *s,
             SignIn::TwoFactor(methods) => return Ok(SignInResult::TwoFactor(methods)),
         };
-        if let Some(old) = st.session.take() {
-            old.lock();
-        }
-        st.refresh = session.refresh_token().map(|r| Secret::new(r.expose()));
-        if let Some(refresh) = &st.refresh {
-            let entry = keyring::Entry { server: session.account.server.clone(), email: session.account.email.clone() };
-            let token = Secret::new(refresh.expose());
-            // Without a keyring the session lasts until the daemon stops.
-            let _ = tokio::task::spawn_blocking(move || entry.save(&token)).await;
-        }
-        st.server = Some(server);
-        st.session = Some(session);
-        st.last_used = Instant::now();
-        st.recent.clear();
-        super::browser::load(st);
+        signed_in(st, server, session).await;
         Ok(SignInResult::Done)
+    }
+
+    /// Signs in with the account's API key, then opens the vault with the master password.
+    pub async fn sign_in_with_api_key(
+        &self,
+        scope: Scope,
+        server_url: &str,
+        client_id: &str,
+        secret: Secret,
+        password: Secret,
+    ) -> Result<()> {
+        need(scope, Scope::App)?;
+        let mut st = self.state.lock().await;
+        let extra_ca = st.settings.refresh().extra_ca.clone();
+        let server = make_server(server_url, extra_ca.as_deref())?;
+        let st = &mut *st;
+        let session =
+            session::sign_in_with_api_key(&mut st.store, &server, client_id, &secret, &password, &device_name()).await?;
+        signed_in(st, server, session).await;
+        Ok(())
+    }
+
+    /// Asks the account's other devices to approve signing in here; returns the words
+    /// both sides show. `PollDeviceSignIn` then waits for the answer.
+    pub async fn request_device_sign_in(&self, scope: Scope, server_url: &str, email: &str) -> Result<String> {
+        need(scope, Scope::App)?;
+        let mut st = self.state.lock().await;
+        let extra_ca = st.settings.refresh().extra_ca.clone();
+        let server = make_server(server_url, extra_ca.as_deref())?;
+        let request = session::request_device_sign_in(&mut st.store, &server, email, &device_name()).await.map_err(|e| match e {
+            SessionError::Api(ApiError::Server { status: 400, .. }) => Failure::new(
+                Code::Failed,
+                "this computer hasn't signed in to this account before, which Vaultwarden needs for this: sign in with the master password once",
+            ),
+            e => e.into(),
+        })?;
+        let fingerprint = request.fingerprint.clone();
+        st.device_sign_in = Some((server, request));
+        Ok(fingerprint)
+    }
+
+    /// Whether the other device has approved (the vault is then open). Declined or
+    /// expired: `Failed`.
+    pub async fn poll_device_sign_in(&self, scope: Scope) -> Result<bool> {
+        need(scope, Scope::App)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let Some((server, request)) = st.device_sign_in.as_mut() else {
+            return Err(Failure::new(Code::Failed, "no sign-in request is waiting"));
+        };
+        let server = server.clone();
+        let polled = request.poll(&mut st.store, &server).await;
+        match polled {
+            Ok(None) => Ok(false),
+            Ok(Some(session)) => {
+                st.device_sign_in = None;
+                signed_in(st, server, session).await;
+                Ok(true)
+            }
+            Err(e) => {
+                st.device_sign_in = None;
+                Err(e.into())
+            }
+        }
+    }
+
+    pub async fn cancel_device_sign_in(&self, scope: Scope) -> Result<()> {
+        need(scope, Scope::App)?;
+        self.state.lock().await.device_sign_in = None;
+        Ok(())
+    }
+
+    /// Other devices asking to sign in with this account, as JSON `[{id, device, ip,
+    /// created, fingerprint}]`. The server is asked when the hub said there's a request,
+    /// or at most once a minute otherwise.
+    pub async fn sign_in_requests(&self, scope: Scope) -> Result<String> {
+        need(scope, Scope::App)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let stale = st.sign_in_requests.as_ref().is_none_or(|(at, _)| at.elapsed() > Duration::from_secs(60));
+        if st.auth_pending || stale {
+            let (server, refresh) = online(st)?;
+            let session = st.session.as_mut().ok_or_else(locked)?;
+            let list = session.sign_in_requests(&server, &refresh).await?;
+            st.auth_pending = false;
+            st.sign_in_requests = Some((Instant::now(), list));
+        }
+        let list: Vec<_> = st
+            .sign_in_requests
+            .as_ref()
+            .map(|(_, l)| l.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .map(|r| json!({"id": r.id, "device": r.device_type, "ip": r.ip, "created": r.created, "fingerprint": r.fingerprint}))
+            .collect();
+        Ok(serde_json::Value::Array(list).to_string())
+    }
+
+    /// Approves or declines another device's request to sign in.
+    pub async fn answer_sign_in(&self, scope: Scope, id: &str, approve: bool) -> Result<()> {
+        need(scope, Scope::App)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        session.answer_sign_in(&server, &refresh, id, approve).await?;
+        st.sign_in_requests = None;
+        st.last_used = Instant::now();
+        Ok(())
+    }
+
+    /// The hub said another device asks to sign in: tell the user, and fetch the list
+    /// next time the window asks.
+    pub async fn sign_in_requested(&self) {
+        self.state.lock().await.auth_pending = true;
+        self.notifier.send("A device asks to sign in", "Open Passwords to approve or decline it.").await;
     }
 
     pub async fn send_email_code(&self, scope: Scope, server_url: &str, email: &str, password: Secret) -> Result<()> {
@@ -513,9 +670,30 @@ impl Vault {
                 tokio::task::spawn_blocking(move || entry.clear_unlock_key());
             }
             applied?;
+            st.revision += 1;
             return Ok(());
         }
         Err(Failure::new(Code::Failed, "the vault kept changing during sync; try again"))
+    }
+
+    /// Goes up each time a sync brings the vault in, so an open window can tell that
+    /// something changed without asking for the listing.
+    pub async fn revision(&self, scope: Scope) -> Result<u64> {
+        need(scope, Scope::App)?;
+        Ok(self.state.lock().await.revision)
+    }
+
+    /// Connects to the server's notification hub with a fresh access token.
+    pub async fn connect_hub(&self) -> Result<nyx_passwords_core::live::Hub> {
+        let (server, access, device) = {
+            let mut st = self.state.lock().await;
+            let st = &mut *st;
+            let (server, refresh) = online(st)?;
+            let session = st.session.as_mut().ok_or_else(locked)?;
+            let access = Secret::new(session.access(&server, &refresh).await?.expose());
+            (server, access, session.account.device_id)
+        };
+        server.connect_hub(&access, device).await.map_err(|e| Failure::from(SessionError::from(e)))
     }
 
     /// Signs out: forgets the session, the local copy and the saved token.
@@ -576,6 +754,22 @@ impl Vault {
         Ok(reveal(&session.keys, &session.snapshot, id, field)?)
     }
 
+    /// The current one-time code for the item view: `(code, period, seconds left)`. The
+    /// view asks again at each new period, so this doesn't count as use: an open item
+    /// mustn't keep the vault from locking.
+    pub async fn totp(&self, scope: Scope, id: &str) -> Result<(Secret, u32, u32)> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let mut st = self.state.lock().await;
+        if !within(&mut st.app_reveals, APP_REVEALS_PER_MINUTE) {
+            return Err(Failure::new(Code::RateLimited, "too many requests; wait a minute"));
+        }
+        reprompt_check(&st, scope, id, Field::Totp)?;
+        let session = st.session.as_ref().ok_or_else(locked)?;
+        let code = nyx_passwords_core::vault::current_code(&session.keys, &session.snapshot, id)?;
+        Ok((code.code, code.period as u32, code.remaining as u32))
+    }
+
     /// An item's other fields as JSON: `[{name, label, value, secret}]`, secret values
     /// left out (`Reveal` them one at a time).
     pub async fn fields(&self, scope: Scope, id: &str) -> Result<String> {
@@ -586,7 +780,10 @@ impl Vault {
         let shown = nyx_passwords_core::vault::fields(&session.keys, &session.snapshot, id)?;
         let list: Vec<_> = shown
             .iter()
-            .map(|f| json!({"name": f.name, "label": f.label, "value": f.value.as_ref().map(|v| v.expose()), "secret": f.secret}))
+            .map(|f| {
+                json!({"name": f.name, "label": f.label, "value": f.value.as_ref().map(|v| v.expose()),
+                       "secret": f.secret, "kind": f.kind})
+            })
             .collect();
         Ok(serde_json::Value::Array(list).to_string())
     }
@@ -612,7 +809,204 @@ impl Vault {
     pub async fn generate_password(&self, scope: Scope, rules: &str) -> Result<Secret> {
         need(scope, Scope::App)?;
         let settings = self.settings().await;
-        generated(&settings, Some(rules))
+        let made = generated(&settings, Some(rules))?;
+        self.remember("password", &made).await;
+        Ok(made)
+    }
+
+    /// Keeps a generated value in the history, while the vault is open.
+    pub(super) async fn remember(&self, what: &'static str, value: &Secret) {
+        let mut st = self.state.lock().await;
+        if st.session.is_none() {
+            return;
+        }
+        let when = SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        st.generated.push_front((what, Secret::new(value.expose()), when));
+        st.generated.truncate(GENERATED_KEPT);
+    }
+
+    /// A username from the generator settings; `site` is the login's address, for
+    /// tags and for the alias service's note.
+    pub async fn generate_username(&self, scope: Scope, site: &str) -> Result<Secret> {
+        use nyx_passwords_core::alias::{self, UsernameKind};
+        need_any(scope, &[Scope::App, Scope::Browser])?;
+        let (rules, entry) = {
+            let mut st = self.state.lock().await;
+            st.session.as_ref().ok_or_else(locked)?;
+            (st.settings.refresh().username_rules.clone(), unlock_entry(&st))
+        };
+        let site = (!site.is_empty()).then_some(site);
+        let made = if rules.kind == UsernameKind::Forwarded {
+            let entry = entry.ok_or_else(|| Failure::new(Code::LoggedOut, "not signed in"))?;
+            let service = rules.service.clone();
+            let token = tokio::task::spawn_blocking(move || entry.load_forwarder_token(&service))
+                .await
+                .map_err(|_| Failure::new(Code::Failed, "the keyring couldn't be read"))?
+                .map_err(|e| Failure::new(Code::Failed, e.to_string()))?
+                .unwrap_or_else(|| Secret::new(""));
+            alias::forwarded(&rules, &token, site, None).await
+        } else {
+            alias::local(&rules, site)
+        }
+        .map_err(|e| Failure::new(Code::Failed, e.to_string()))?;
+        self.remember("username", &made).await;
+        Ok(made)
+    }
+
+    /// Saves an alias service's API token in the keyring (an empty token removes it).
+    pub async fn set_forwarder_token(&self, scope: Scope, service: &str, token: Secret) -> Result<()> {
+        need(scope, Scope::App)?;
+        let entry = unlock_entry(&*self.state.lock().await).ok_or_else(|| Failure::new(Code::LoggedOut, "not signed in"))?;
+        let service = service.to_string();
+        tokio::task::spawn_blocking(move || {
+            if token.is_empty() { entry.clear_forwarder_token(&service) } else { entry.save_forwarder_token(&service, &token) }
+        })
+        .await
+        .map_err(|_| Failure::new(Code::Failed, "the keyring couldn't be reached"))?
+        .map_err(|e| Failure::new(Code::Failed, e.to_string()))
+    }
+
+    /// Which alias services have a token saved: JSON `{service: bool}`.
+    pub async fn forwarder_tokens(&self, scope: Scope) -> Result<String> {
+        need(scope, Scope::App)?;
+        let Some(entry) = unlock_entry(&*self.state.lock().await) else { return Ok("{}".into()) };
+        let saved = tokio::task::spawn_blocking(move || {
+            nyx_passwords_core::alias::SERVICES
+                .iter()
+                .map(|(id, _)| (id.to_string(), entry.load_forwarder_token(id).ok().flatten().is_some().into()))
+                .collect::<serde_json::Map<String, serde_json::Value>>()
+        })
+        .await
+        .map_err(|_| Failure::new(Code::Failed, "the keyring couldn't be reached"))?;
+        Ok(serde_json::Value::Object(saved).to_string())
+    }
+
+    /// Emergency contacts both ways, as JSON `{trusted: […], granted: […]}`, each
+    /// `{id, name, email, status, wait_days}`.
+    pub async fn emergency_contacts(&self, scope: Scope) -> Result<String> {
+        need(scope, Scope::App)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        let (trusted, granted) = session.emergency_contacts(&server, &refresh).await?;
+        let json_of = |list: Vec<nyx_passwords_core::emergency::Contact>| -> Vec<serde_json::Value> {
+            list.into_iter()
+                .map(|c| json!({"id": c.id, "name": c.name, "email": c.email, "status": c.status.name(), "wait_days": c.wait_days, "takeover": c.takeover}))
+                .collect()
+        };
+        Ok(json!({"trusted": json_of(trusted), "granted": json_of(granted)}).to_string())
+    }
+
+    /// One emergency-access action: `invite` (`arg`: email, `days`), `fingerprint` (the
+    /// contact's phrase, returned), `confirm`, `request`, `approve`, `reject`, `remove`,
+    /// `me` (this account's own phrase, returned).
+    pub async fn emergency(&self, scope: Scope, action: &str, arg: &str, days: u32) -> Result<String> {
+        use nyx_passwords_core::emergency::Step;
+        need(scope, Scope::App)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        st.last_used = Instant::now();
+        let step = match action {
+            "request" => Some(Step::Request),
+            "approve" => Some(Step::Approve),
+            "reject" => Some(Step::Reject),
+            "remove" => Some(Step::Remove),
+            _ => None,
+        };
+        let done = |r: std::result::Result<(), SessionError>| r.map(|()| String::new());
+        let out = match (action, step) {
+            (_, Some(step)) => done(session.emergency_step(&server, &refresh, arg, step).await),
+            ("invite", _) => done(session.invite_emergency(&server, &refresh, arg, days).await),
+            ("fingerprint", _) => session.emergency_fingerprint(&server, &refresh, arg).await,
+            ("confirm", _) => done(session.confirm_emergency(&server, &refresh, arg).await),
+            ("me", _) => session.my_fingerprint(&server, &refresh).await,
+            _ => return Err(Failure::new(Code::Failed, "unknown action")),
+        };
+        Ok(out?)
+    }
+
+    /// Opens a grantor's vault (they approved): the listing as JSON, like `List`'s
+    /// entries. It stays open in the daemon until the vault locks or another is opened.
+    pub async fn view_emergency(&self, scope: Scope, id: &str) -> Result<String> {
+        need(scope, Scope::App)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        let opened = session.view_emergency(&server, &refresh, id).await?;
+        let entries: Vec<_> = opened.view.entries.iter().map(entry_json).collect();
+        st.grantor = Some(opened);
+        st.last_used = Instant::now();
+        Ok(serde_json::Value::Array(entries).to_string())
+    }
+
+    /// A field of an item in the open grantor's vault (`username`, `password`, `totp`,
+    /// `notes`, …), for showing.
+    pub async fn emergency_reveal(&self, scope: Scope, id: &str, field_name: &str) -> Result<Secret> {
+        need(scope, Scope::App)?;
+        let field = any_field(field_name)?;
+        let id = parse_id(id)?;
+        let mut st = self.state.lock().await;
+        if !within(&mut st.app_reveals, APP_REVEALS_PER_MINUTE) {
+            return Err(Failure::new(Code::RateLimited, "too many requests; wait a minute"));
+        }
+        st.last_used = Instant::now();
+        let grantor = st.grantor.as_ref().ok_or_else(|| Failure::new(Code::NotFound, "no vault is open for emergency access"))?;
+        Ok(nyx_passwords_core::vault::reveal_in(&grantor.keys, &grantor.ciphers, id, field)?)
+    }
+
+    /// An item's passkeys as JSON `[{credential_id, rp_id, rp_name, user_name, created}]`.
+    pub async fn passkeys(&self, scope: Scope, id: &str) -> Result<String> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let st = self.state.lock().await;
+        let session = st.session.as_ref().ok_or_else(locked)?;
+        let list: Vec<_> = session
+            .passkeys(id)?
+            .into_iter()
+            .map(|p| {
+                json!({"credential_id": p.credential_id, "rp_id": p.rp_id, "rp_name": p.rp_name,
+                       "user_name": p.user_name, "created": p.creation_date})
+            })
+            .collect();
+        Ok(serde_json::Value::Array(list).to_string())
+    }
+
+    pub async fn delete_passkey(&self, scope: Scope, id: &str, credential_id: &str) -> Result<()> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        st.edits += 1;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        session.delete_passkey(&mut st.store, &server, &refresh, id, credential_id).await?;
+        st.last_used = Instant::now();
+        Ok(())
+    }
+
+    /// Copies the n-th value of the generator history, cleared later like any copy.
+    pub async fn copy_generated(self: &Arc<Self>, scope: Scope, index: u32) -> Result<u32> {
+        need(scope, Scope::App)?;
+        let (value, settings) = {
+            let mut st = self.state.lock().await;
+            let value = st.generated.get(index as usize).map(|(_, v, _)| Secret::new(v.expose()));
+            (value.ok_or_else(|| Failure::new(Code::NotFound, "no such value"))?, st.settings.refresh().clone())
+        };
+        self.put_on_clipboard(value, &settings, "Generated value").await
+    }
+
+    /// The generator history: JSON `[{what, value, when}]`, newest first.
+    pub async fn generator_history(&self, scope: Scope) -> Result<String> {
+        need(scope, Scope::App)?;
+        let st = self.state.lock().await;
+        st.session.as_ref().ok_or_else(locked)?;
+        let list: Vec<_> =
+            st.generated.iter().map(|(what, value, when)| json!({"what": what, "value": value.expose(), "when": when})).collect();
+        Ok(serde_json::Value::Array(list).to_string())
     }
 
     pub async fn create_login(&self, scope: Scope, draft: &str) -> Result<String> {
@@ -794,6 +1188,197 @@ impl Vault {
         st.last_used = Instant::now();
         Ok(())
     }
+
+    /// Moves several items (`ids`, a JSON list) to the trash, or restores them.
+    pub async fn trash_many(&self, scope: Scope, ids: &str, restore: bool) -> Result<()> {
+        need(scope, Scope::App)?;
+        let ids = parse_ids(ids)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        st.edits += 1;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        session.trash_many(&mut st.store, &server, &refresh, &ids, restore).await?;
+        st.last_used = Instant::now();
+        Ok(())
+    }
+
+    /// Deletes items in the trash for good (`ids`, a JSON list).
+    pub async fn delete_forever(&self, scope: Scope, ids: &str) -> Result<()> {
+        need(scope, Scope::App)?;
+        let ids = parse_ids(ids)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        st.edits += 1;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        session.delete_forever(&mut st.store, &server, &refresh, &ids).await?;
+        st.last_used = Instant::now();
+        Ok(())
+    }
+
+    /// Puts several items in folder `folder` (empty: no folder).
+    pub async fn move_items(&self, scope: Scope, ids: &str, folder: &str) -> Result<()> {
+        need(scope, Scope::App)?;
+        let ids = parse_ids(ids)?;
+        let folder = if folder.is_empty() { None } else { Some(parse_id(folder)?) };
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        st.edits += 1;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        session.move_many(&mut st.store, &server, &refresh, &ids, folder).await?;
+        st.last_used = Instant::now();
+        Ok(())
+    }
+
+    pub async fn create_folder(&self, scope: Scope, name: &str) -> Result<String> {
+        need(scope, Scope::App)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        let id = session.create_folder(&mut st.store, &server, &refresh, &Secret::new(name)).await?;
+        st.last_used = Instant::now();
+        Ok(id.to_string())
+    }
+
+    pub async fn rename_folder(&self, scope: Scope, id: &str, name: &str) -> Result<()> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        session.rename_folder(&mut st.store, &server, &refresh, id, &Secret::new(name)).await?;
+        st.last_used = Instant::now();
+        Ok(())
+    }
+
+    /// Deletes a folder; its items stay, in no folder.
+    pub async fn delete_folder(&self, scope: Scope, id: &str) -> Result<()> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        st.edits += 1;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        session.delete_folder(&mut st.store, &server, &refresh, id).await?;
+        st.last_used = Instant::now();
+        Ok(())
+    }
+
+    /// An item's old passwords as JSON `[{index, date}]`, newest first; reveal one with
+    /// the field `history:N`.
+    pub async fn history(&self, scope: Scope, id: &str) -> Result<String> {
+        need(scope, Scope::App)?;
+        let id = parse_id(id)?;
+        let st = self.state.lock().await;
+        let session = st.session.as_ref().ok_or_else(locked)?;
+        let dates = nyx_passwords_core::vault::history(&session.snapshot, id)?;
+        let list: Vec<_> = dates.iter().enumerate().map(|(i, d)| json!({"index": i, "date": d})).collect();
+        Ok(serde_json::Value::Array(list).to_string())
+    }
+
+    /// Writes an export (`json`, `csv`, `password_json`, `account_json`) into `file`,
+    /// which the app opened where the user chose. Needs the master password confirmed
+    /// just before, as for items that ask for it.
+    pub async fn export(&self, scope: Scope, format: &str, password: &str, file: std::fs::File) -> Result<()> {
+        use nyx_passwords_core::transfer;
+        need(scope, Scope::App)?;
+        let format = transfer::ExportFormat::parse(format).ok_or_else(|| Failure::new(Code::Failed, "unknown format"))?;
+        let made = {
+            let mut st = self.state.lock().await;
+            if !st.confirmed.is_some_and(|t| t.elapsed() < REPROMPT_GRACE) {
+                return Err(Failure::new(Code::Reprompt, "confirm the master password first"));
+            }
+            st.last_used = Instant::now();
+            let session = st.session.as_ref().ok_or_else(locked)?;
+            let password = Secret::new(password);
+            transfer::export(&session.keys, &session.snapshot, format, Some(&password)).map_err(transfer_failure)?
+        };
+        tokio::task::spawn_blocking(move || {
+            use std::io::Write;
+            let mut file = file;
+            file.write_all(made.expose().as_bytes())?;
+            file.sync_all()
+        })
+        .await
+        .map_err(|_| Failure::new(Code::Failed, "the file couldn't be written"))?
+        .map_err(|e| Failure::new(Code::Failed, format!("the file couldn't be written: {e}")))
+    }
+
+    /// What importing `file` would add: `{format, items, folders, counts}`.
+    /// `NeedsPassword` for an export protected by a password not given.
+    pub async fn import_preview(&self, scope: Scope, password: &str, file: std::fs::File) -> Result<String> {
+        need(scope, Scope::App)?;
+        let data = read_import(file).await?;
+        let st = self.state.lock().await;
+        let session = st.session.as_ref().ok_or_else(locked)?;
+        let parsed = parse_import(&data, password, session)?;
+        Ok(json!({"format": parsed.format, "items": parsed.items.len(), "folders": parsed.folders.len(), "counts": parsed.counts()})
+            .to_string())
+    }
+
+    /// Imports `file` as personal items; returns how many.
+    pub async fn import(&self, scope: Scope, password: &str, file: std::fs::File) -> Result<u32> {
+        need(scope, Scope::App)?;
+        let data = read_import(file).await?;
+        let mut st = self.state.lock().await;
+        let st = &mut *st;
+        let (server, refresh) = online(st)?;
+        st.edits += 1;
+        let session = st.session.as_mut().ok_or_else(locked)?;
+        let parsed = parse_import(&data, password, session)?;
+        session.import(&mut st.store, &server, &refresh, &parsed).await?;
+        st.revision += 1;
+        st.last_used = Instant::now();
+        Ok(parsed.items.len() as u32)
+    }
+
+    /// A private key with a passphrase, opened for the editor: `{private, public,
+    /// fingerprint}`, the private key without the passphrase (as items keep it).
+    pub fn open_ssh_key(&self, scope: Scope, private: &str, passphrase: &str) -> Result<String> {
+        need(scope, Scope::App)?;
+        if private.len() > SSH_KEY_MAX {
+            return Err(Failure::new(Code::Failed, "that file is too large to be a private key"));
+        }
+        let key = nyx_passwords_core::ssh::read_with_passphrase(private, &Secret::new(passphrase))
+            .map_err(|e| Failure::new(Code::Failed, e.to_string()))?;
+        Ok(json!({"private": key.private.expose(), "public": key.public, "fingerprint": key.fingerprint}).to_string())
+    }
+}
+
+fn transfer_failure(e: nyx_passwords_core::transfer::TransferError) -> Failure {
+    use nyx_passwords_core::transfer::TransferError;
+    let code = match e {
+        TransferError::NeedsPassword => Code::NeedsPassword,
+        _ => Code::Failed,
+    };
+    Failure::new(code, e.to_string())
+}
+
+async fn read_import(file: std::fs::File) -> Result<Vec<u8>> {
+    use nyx_passwords_core::transfer::IMPORT_MAX;
+    let data = tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut data = Vec::new();
+        file.take(IMPORT_MAX as u64 + 1).read_to_end(&mut data).map(|_| data)
+    })
+    .await
+    .map_err(|_| Failure::new(Code::Failed, "the file couldn't be read"))?
+    .map_err(|e| Failure::new(Code::Failed, format!("the file couldn't be read: {e}")))?;
+    if data.len() > IMPORT_MAX {
+        return Err(Failure::new(Code::Failed, "the file is too large"));
+    }
+    Ok(data)
+}
+
+fn parse_import(data: &[u8], password: &str, session: &Session) -> Result<nyx_passwords_core::transfer::Parsed> {
+    let password = (!password.is_empty()).then(|| Secret::new(password));
+    let data = SecretBytes::new(data.to_vec());
+    nyx_passwords_core::transfer::parse(data.expose(), password.as_ref(), &session.keys).map_err(transfer_failure)
 }
 
 /// A field by its interface name: `username`, `password`, `totp`, `totp_seed`, `notes`,
@@ -807,7 +1392,12 @@ fn any_field(name: &str) -> Result<Field> {
         "notes" => Field::Notes,
         other => match other.strip_prefix("custom:").and_then(|n| n.parse().ok()) {
             Some(n) => Field::Custom(n),
-            None => nyx_passwords_core::vault::sub_field(other).ok_or_else(|| Failure::new(Code::NoField, "unknown field"))?,
+            None => match other.strip_prefix("history:").and_then(|n| n.parse().ok()) {
+                Some(n) => Field::History(n),
+                None => {
+                    nyx_passwords_core::vault::sub_field(other).ok_or_else(|| Failure::new(Code::NoField, "unknown field"))?
+                }
+            },
         },
     };
     Ok(field)
@@ -819,6 +1409,25 @@ pub(super) fn need(scope: Scope, wanted: Scope) -> Result<()> {
 
 fn need_any(scope: Scope, wanted: &[Scope]) -> Result<()> {
     if wanted.contains(&scope) { Ok(()) } else { Err(denied()) }
+}
+
+/// After signing in by any route: the token kept in the keyring, the session open.
+async fn signed_in(st: &mut State, server: Server, session: Session) {
+    if let Some(old) = st.session.take() {
+        old.lock();
+    }
+    st.refresh = session.refresh_token().map(|r| Secret::new(r.expose()));
+    if let Some(refresh) = &st.refresh {
+        let entry = keyring::Entry { server: session.account.server.clone(), email: session.account.email.clone() };
+        let token = Secret::new(refresh.expose());
+        // Without a keyring the session lasts until the daemon stops.
+        let _ = tokio::task::spawn_blocking(move || entry.save(&token)).await;
+    }
+    st.server = Some(server);
+    st.session = Some(session);
+    st.last_used = Instant::now();
+    st.recent.clear();
+    super::browser::load(st);
 }
 
 /// After an unlock: the server, the saved session token, browser pairings.
@@ -961,6 +1570,8 @@ fn parse_draft(text: &str) -> Result<LoginDraft> {
         organization: Option<Uuid>,
         #[serde(default)]
         collections: Vec<Uuid>,
+        #[serde(default)]
+        custom: Option<Vec<CustomJson>>,
     }
     let d: Draft = serde_json::from_str(text).map_err(|_| Failure::new(Code::Failed, "the item couldn't be read"))?;
     if d.name.trim().is_empty() {
@@ -978,7 +1589,48 @@ fn parse_draft(text: &str) -> Result<LoginDraft> {
         favorite: d.favorite,
         reprompt: d.reprompt,
         place: Place { organization: d.organization, collections: d.collections },
+        custom: custom_fields(d.custom)?,
     })
+}
+
+/// A custom field in a draft: `{name, value, kind, from}` (see `CustomDraft`).
+#[derive(Deserialize)]
+struct CustomJson {
+    name: String,
+    #[serde(default)]
+    value: Option<String>,
+    #[serde(default)]
+    kind: i64,
+    #[serde(default)]
+    from: Option<usize>,
+}
+
+/// The most custom fields an item may have here.
+const CUSTOM_MAX: usize = 200;
+
+fn custom_fields(list: Option<Vec<CustomJson>>) -> Result<Option<Vec<CustomDraft>>> {
+    let Some(list) = list else { return Ok(None) };
+    if list.len() > CUSTOM_MAX {
+        return Err(Failure::new(Code::Failed, "too many custom fields"));
+    }
+    if list.iter().any(|f| !(0..=2).contains(&f.kind)) {
+        return Err(Failure::new(Code::Failed, "a custom field has an unknown type"));
+    }
+    Ok(Some(
+        list.into_iter()
+            .map(|f| CustomDraft { name: Secret::new(f.name), value: f.value.map(Secret::new), kind: f.kind, from: f.from })
+            .collect(),
+    ))
+}
+
+/// A list of item ids, as JSON (`["…", …]`), for the actions on several items.
+fn parse_ids(text: &str) -> Result<Vec<Uuid>> {
+    too_large(text)?;
+    let ids: Vec<Uuid> = serde_json::from_str(text).map_err(|_| Failure::new(Code::NotFound, "no such item"))?;
+    if ids.is_empty() {
+        return Err(Failure::new(Code::Failed, "no items chosen"));
+    }
+    Ok(ids)
 }
 
 /// A note, card, identity or SSH key draft: `{kind, name, fields: {"card.number": …},
@@ -1003,6 +1655,8 @@ fn parse_item_draft(text: &str) -> Result<ItemDraft> {
         organization: Option<Uuid>,
         #[serde(default)]
         collections: Vec<Uuid>,
+        #[serde(default)]
+        custom: Option<Vec<CustomJson>>,
     }
     let unreadable = || Failure::new(Code::Failed, "the item couldn't be read");
     let d: Draft = serde_json::from_str(text).map_err(|_| unreadable())?;
@@ -1028,6 +1682,7 @@ fn parse_item_draft(text: &str) -> Result<ItemDraft> {
         favorite: d.favorite,
         reprompt: d.reprompt,
         place: Place { organization: d.organization, collections: d.collections },
+        custom: custom_fields(d.custom)?,
     })
 }
 
