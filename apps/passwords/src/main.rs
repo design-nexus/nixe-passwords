@@ -1,5 +1,6 @@
 //! Nyx Passwords: the window. The vault itself lives in `nyx-passwordsd`.
 
+mod dialog_dismissal;
 mod app;
 
 use gtk::{gio, glib, prelude::*};

@@ -33,6 +33,7 @@ async fn act(action: &str, arg: &str, days: u32) -> client::Result<String> {
 
 pub fn open(ui: &Ui) {
     let (dialog, card) = w::dialog("Emergency access", 580);
+    crate::dialog_dismissal::add(&dialog, &card, "Close");
     dialog.set_transient_for(Some(&ui.window));
     card.append(&label(
         "People you trust can ask to see your vault. They get in when you approve, or when the wait you set runs out without you turning them down. They can only view it.",
@@ -236,6 +237,7 @@ fn view(ui: &Ui, c: &Contact) {
             Err(e) => return ui::toast(&ui, &e.to_string()),
         };
         let (dialog, card) = w::dialog(&format!("{}'s vault", if c.name.is_empty() { &c.email } else { &c.name }), 560);
+        crate::dialog_dismissal::add(&dialog, &card, "Close");
         dialog.set_transient_for(Some(&ui.window));
         card.append(&label("Read-only. It's closed again when your vault locks.", "dim"));
         let rows = w::vbox(0);

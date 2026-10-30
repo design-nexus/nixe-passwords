@@ -163,6 +163,7 @@ fn username_rows(ui: &Ui, g: &gtk::Box, r: &nyx_passwords_core::alias::UsernameR
     let u = ui.clone();
     set_token.connect_clicked(move |_| {
         let (dialog, card) = w::dialog("Alias service token", 440);
+        crate::dialog_dismissal::add(&dialog, &card, "Cancel");
         dialog.set_transient_for(Some(&u.window));
         card.append(&label("Paste the API token from the service's settings. Leave it empty to remove the saved one.", "dim"));
         let entry = gtk::PasswordEntry::new();

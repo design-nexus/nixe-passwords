@@ -877,6 +877,7 @@ fn show_history(ui: &Ui) {
             Err(e) => return ui::toast(&ui, &e.to_string()),
         };
         let (dialog, card) = w::dialog("Generator history", 480);
+        crate::dialog_dismissal::add(&dialog, &card, "Close");
         dialog.set_transient_for(Some(&ui.window));
         if list.is_empty() {
             card.append(&label("Nothing generated since the vault was unlocked.", "dim"));
